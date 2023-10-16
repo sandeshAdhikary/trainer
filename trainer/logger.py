@@ -100,8 +100,7 @@ class Logger(ABC):
     def __init__(self, config: dict) -> None:
 
         self.project = config.get('project', 'misc')
-        self.dir = config.get('dir', './logdir')
-        self.dir = os.path.abspath(self.dir)
+        self.dir =  os.path.abspath(config.get('dir', './logdir'))
 
         # Make sure self.dir is writable
         if not utils.is_directory_writable(self.dir):
@@ -122,7 +121,12 @@ class Logger(ABC):
                 tags = list(tags)
             if wandb.run is None:
                 # Initialize a new summary-writer / wandb-run
-                wandb.login(key=DEFAULTS['WANDB_API_KEY'])
+                wandb_api = config.get('wandb_api')
+                if wandb_api is None:
+                    # Try to get it from the environment
+                    wandb_api = os.environ.get('WANDB_API_KEY')
+                # Try interactive login (unless already logged in)
+                wandb.login()
                 project = config.get('project', self.project)
                 self._sw = wandb.init(project=project, dir=self.dir, config=tracked_params, tags=tags)
             else:
@@ -135,12 +139,6 @@ class Logger(ABC):
             self.run_name = self._sw.name
         
         self.logdir = self._sw.dir
-
-        # Create checkpoint directory
-        # self.chkpt_dir = f"{self.logdir}/checkpoint"
-        # if not os.path.exists(self.chkpt_dir):
-        #     os.makedirs(self.chkpt_dir)
-
         
         format_config = config.get('format_config', 'rl')
         self._train_mg = MetersGroup(
