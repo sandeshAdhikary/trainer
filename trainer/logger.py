@@ -8,7 +8,7 @@ import os
 import json
 from collections import defaultdict
 from termcolor import colored
-from trainer.defaults import DEFAULTS
+# from trainer.defaults import DEFAULTS
 import zipfile
 from warnings import warn
 import trainer.utils as utils
