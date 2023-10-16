@@ -1,0 +1,22 @@
+trainer:
+  num_train_steps: 10
+  seed: 123
+  eval_freq: 2
+  checkpoint_freq: 1
+  load_from_checkpoint: true
+  save_checkpoints: true
+  save_checkpoint_freq: 1
+  async_eval: false
+model: &model
+  lr: 0.001
+  model_size: 'large'
+logger:
+  project: test
+  sweep:
+    name: test
+  dir: /logdir
+  sw: wandb
+  img_downscale_factor: 2 # Logged images are downscaled by this factor
+  minimal: false
+  video_log_freq: null
+  tracked_params: *model

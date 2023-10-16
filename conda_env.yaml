@@ -1,0 +1,19 @@
+name: trainer
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pytorch=1.12.1=gpu_cuda113py39h19ae3d8_1
+  - mysqlclient
+  - pip
+  - pip:
+    - pillow==9.4.0
+    - rich
+    - tqdm
+    - imageio
+    - imageio-ffmpeg
+    - einops
+    - matplotlib
+    - wandb
+    - sqlalchemy
