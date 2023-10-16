@@ -1,8 +1,8 @@
-# WANDB
-WANDB_API_KEY: null
+# # WANDB
+# WANDB_API_KEY: null
 
-# Database
-DB_URL: null
+# # Database
+# DB_URL: null
 
-# Logging
-LOG_DIR: null
+# # Logging
+# LOG_DIR: null
