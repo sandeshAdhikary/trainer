@@ -100,7 +100,7 @@ class Logger(ABC):
     def __init__(self, config: dict) -> None:
 
         self.project = config.get('project', 'misc')
-        self.dir = os.path.join(DEFAULTS['PROJECT_DIR'], config['dir'])
+        self.dir = config.get('dir', './logdir')
         self.dir = os.path.abspath(self.dir)
 
         # Make sure self.dir is writable

@@ -63,7 +63,7 @@ class SimpleMLModel(Model):
                              }
         torch.save(model_constructor, filename)
 
-    def load_model(self, filename, zip=False):
+    def load_model(self, filename):
         restored_model = torch.load(filename)
         self.model.load_state_dict(restored_model['model_state_dict'])
         self.optimzier.load_state_dict(restored_model['optimizer_state_dict'])
