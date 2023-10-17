@@ -3,6 +3,7 @@ from trainer.rl.envs import TrainerEnv
 from typing import Dict
 from abc import ABC, abstractmethod
 from trainer.rl.replay_buffers import ReplayBuffer
+import numpy as np
 
 class RLTrainer(Trainer, ABC):
 
