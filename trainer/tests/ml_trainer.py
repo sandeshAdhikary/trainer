@@ -96,7 +96,7 @@ class MLTrainer(Trainer):
         
         
 
-    def log_step(self):
+    def log_step(self, info=None):
         # Log train metrics
         if len(self.train_log) > 0:
             train_log_step = self.train_log[-1]['step']

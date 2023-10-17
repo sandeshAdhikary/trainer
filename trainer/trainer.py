@@ -92,20 +92,7 @@ class Trainer(ABC):
         """
         self.data = None
 
-    @abstractmethod
-    def log_step(self):
-        """
-        Log using self.train_log and self.eval_log
-        self.*_log = deque({'step': int, 'output': Dict})
-        """
-        pass
-
-    def before_epoch(self):
-        pass
-    def after_epoch(self):
-        pass
-
-    def before_train(self, trainer_state: Dict =None):
+    def before_train(self, trainer_state: Dict =None, info=None):
         """
         Callbacks before training starts
         """
@@ -126,27 +113,49 @@ class Trainer(ABC):
         # Set model to train mode
         self.model.train()
 
-    def after_train(self):
+    def before_epoch(self, info=None):
+        pass
+    
+    def before_step(self, info=None):
+        self.model.train() # Set model to training mode
+
+    def after_train(self, info=None):
         """
         Callbacks after training ends
         """
         # Close logger
         # Close any open connections
-        pass
+        self.log_train(info)
 
-    def before_step(self):
-        self.model.train() # Set model to training mode
+    def after_epoch(self, info=None):
+        self.log_epoch(info)
 
-    def after_step(self):
+
+    def after_step(self, info=None):
         # Update trainer state
         self.update_trainer_state()
         # Logging
-        self.log_step()
+        self.log_step(info)
         # Update progress
         if self.progress is not None:
             self.progress.update(self.progress_train, completed=self.step)
         # Save checkpoint
         self._save_checkpoint()
+
+
+    def log_step(self, info=None):
+        """
+        Log using self.train_log and self.eval_log
+        self.*_log = deque({'step': int, 'output': Dict})
+        """
+        pass
+
+    def log_epoch(self, info=None):
+        pass
+
+    def log_train(self, info=None):
+        pass
+
 
 
     def update_trainer_state(self):
