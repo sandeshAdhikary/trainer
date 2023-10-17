@@ -29,7 +29,7 @@ class RLTrainer(Trainer, ABC):
         raise NotImplementedError
 
     def _setup_env(self, config):
-        env_fn, eval_env_fn, _ = self.env_fns(config['env'])
+        env_fn, eval_env_fn = self.env_fns(config['env'])
         self.env = TrainerEnv(env_fn, vec_env=False)
         self.eval_env = TrainerEnv(eval_env_fn)
 
