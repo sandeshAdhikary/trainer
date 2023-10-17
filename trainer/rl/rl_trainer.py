@@ -8,7 +8,7 @@ class RLTrainer(Trainer, ABC):
 
     def setup_data(self, config: Dict):
         # Setup the environment
-        self.env, self.eval_env = self.setup_envs(config['env'])
+        self.env, self.eval_env = self._setup_env(config['env'])
 
         # Setup the replay buffer
         env_shapes = self.env.get_env_shapes()
