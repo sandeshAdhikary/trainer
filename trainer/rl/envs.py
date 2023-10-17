@@ -62,6 +62,10 @@ class TrainerEnv(gym.Wrapper):
             self.num_envs = 1
             self.envs = [self.env]
 
+    @property
+    def is_vec_env(self):
+        return isinstance(self.env, self.VEC_ENV_TYPES)
+
     def _maybe_vec_wrap_envs(self, env_fns, vec_env=True):
         """
         env_fns: A list of environment constructor functions. Can be single env too
