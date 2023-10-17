@@ -54,23 +54,66 @@ class RLTrainer(Trainer, ABC):
                 else:
                     # update trainer state
                     self.after_step()
-                self.after_epoch({'rollout': rollout_data})
+                self.after_epoch({'rollout': rollout_data, 'num_updates': num_updates})
                 # self.evaluate(self.eval_data, training_mode=True)
+                
         self.after_train() 
 
     def after_epoch(self, epoch_info=None):
+        super().after_epoch(epoch_info)
+
         # Update state from rollout data
-        rollout_data = epoch_info.get('rollout_data')
-        if rollout_data:
-            self.reward = rollout_data['reward']
-            self.obs = rollout_data['next_obs']
-            self.done = rollout_data['terminated'] | rollout_data['truncated']
-            self.step += rollout_data['num_steps']
+        rollout_data = epoch_info['rollout']
+        # Update trainer state
+        self.reward = rollout_data['reward']
+        self.obs = rollout_data['next_obs']
+        self.done = rollout_data['terminated'] | rollout_data['truncated']
+        self.step += rollout_data['num_steps']
+        self.num_model_updates += epoch_info['num_updates']
+        self.current_episode_reward += self.reward
+        
+        if not self.env.is_vec_env:
+            # Check if episodes are done
+            if self.done:
+                # Reset environment
+                self.obs = self.env.reset()
+                # Increment episode counter
+                self.num_episodes += self.done
+                # Update episode rewards
+                self.episode_reward_list.append(self.current_episode_reward)
+                # Clear current episode reward tracker once done
+                self.current_episode_reward = 0
+        else:
+            if any(self.done):
+                # Note: No need to reset since VecEnv resets automatically after an episode is done
+                # Increment episode counter
+                self.num_episodes += self.done
+                # Update episode rewards
+                for idx in range(self.env.num_envs):
+                    if self.done[idx]:
+                        # Record episode reward in list
+                        self.episode_reward_list[idx].append(self.current_episode_reward[idx])
+                        # Clear current episode reward tracker if done
+                        self.current_episode_reward[idx] = 0
+
+            # Call training callback
+            # TODO: Add training callback
 
     def log_step(self, info=None):
         pass
+    
     def log_epoch(self, info=None):
-        pass
+        # Log episode metrics when an episode is done
+        ep_done = any(self.done) if self.env.is_vec_env else self.done
+        if ep_done:
+            # Log episode rewards (if all envs have completed at least one episode)
+            if (self.step > 0) and (all([x >=1 for x in self.num_episodes])):
+                avg_ep_reward = np.mean([x[-1] for x in self.episode_reward_list])
+                self.logger.log(key='train/episode_reward', value=avg_ep_reward, step=self.step)
+        # Log metrics from train_log
+        self.logger.log(key='train/episode', value=sum(self.num_episodes), step=self.step)
+        self.logger.log(key='train/num_model_updates', value=self.num_model_updates, step=self.step)
+
     def log_train(self, info=None):
         pass
 
@@ -84,9 +127,10 @@ class RLTrainer(Trainer, ABC):
         # Env Step
         next_obs, reward, terminated, truncated, info = self.env.step(action)
         if add_to_buffer:
+            # TODO: Move this to after_epoch()
             # Add to buffer: allow infinite bootstrap: don't store truncated as done
             curr_reward = self.reward
-            self.replay_buffer.add(obs, action, curr_reward, reward, next_obs, terminated, info, 
+            self.replay_buffer.add(obs, action, curr_reward, reward, next_obs, terminated, 
                                    batched=self.env.is_vec_env)
 
         num_steps = self.env.num_envs
@@ -112,20 +156,6 @@ class RLTrainer(Trainer, ABC):
             return self.config['init_steps'] if self.step == 0 else self.env.num_envs
         return 0
 
-    def parse_config(self, config: Dict):
-        # Convert eval_img_sources from a single list to a list of strings
-        if isinstance(config['env'].get('eval_img_sources'), str):
-            config['env']['eval_img_sources'] = config['env']['eval_img_sources'].strip("(')").replace("'", "")
-            config['env']['eval_img_sources'] = config['env']['eval_img_sources'].replace("[", "")
-            config['env']['eval_img_sources'] = config['env']['eval_img_sources'].replace("]", "")
-            config['env']['eval_img_sources'] = [item.strip() for item in config['env']['eval_img_sources'].split(',')]
-
-
-        if config.get('img_source') == 'none':
-            config['env']['img_source'] = None
-
-        return config
-
     def init_trainer_state(self, state_dict=None):
         # Initialize/update step, train/eval logs, etc.
         super().init_trainer_state(state_dict)
@@ -135,6 +165,7 @@ class RLTrainer(Trainer, ABC):
         self.reward = [0]*self.env.num_envs
         # Set up counters
         self.num_episodes = np.zeros(self.env.num_envs)
-        # self.episode_reward = np.zeros(self.env.num_envs)
-        # self.episode_reward_list = [[] for _ in range(self.env.num_envs)]
+        self.episode = np.zeros(self.env.num_envs)
+        self.current_episode_reward = np.zeros(self.env.num_envs)
+        self.episode_reward_list = [[] for _ in range(self.env.num_envs)]
         self.num_model_updates = 0
