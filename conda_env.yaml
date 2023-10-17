@@ -8,6 +8,7 @@ dependencies:
   - mysqlclient
   - pip
   - pip:
+    - gym
     - pillow==9.4.0
     - rich
     - tqdm
