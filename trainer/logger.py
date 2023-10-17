@@ -98,7 +98,7 @@ class MetersGroup(object):
 
 class Logger(ABC):
     def __init__(self, config: dict) -> None:
-
+        config = self.parse_config(config)
         self.project = config.get('project', 'misc')
         self.dir =  os.path.abspath(config.get('dir', './logdir'))
 
@@ -173,6 +173,23 @@ class Logger(ABC):
     def finish(self):
         if self.sw_type == 'wandb':
             self._sw.finish()
+
+    def parse_config(self, config):
+        if isinstance(config.get('tags'), str):
+            # if tags = '[this, that]' then make ['this', 'that']
+            config['tags'] = config['tags'] .strip("(')").replace("'", "")
+            config['tags']  = config['tags'] .replace("[", "")
+            config['tags']  = config['tags'] .replace("]", "")
+            config['tags']  = [item.strip() for item in config['tags'] .split(',')]
+
+        # Set logger_video_log_freq
+        if config.get('logger_video_log_freq') in [None, 'none', 'None']:
+            # Set logger_video_log_freq so we get max num_video_logs videos per run
+            num_video_logs = config.get('num_video_logs', 5)
+            num_evals = int(config['num_train_steps'] // config['eval_freq'])
+            config['logger_video_log_freq'] = max(int(num_evals / num_video_logs), 1)
+
+        return config
 
     ########################################
     # Summary writer specific functions ####

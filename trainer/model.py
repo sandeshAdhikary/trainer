@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Union
 from types import SimpleNamespace
 import numpy as np
+import torch
 
 class Model(ABC):
 
@@ -12,6 +13,8 @@ class Model(ABC):
         """
         Parse the config dictionary into input config for the model
         """
+        if config.get('device') is None:
+            config['device'] = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         return config
 
     def training_step(self):

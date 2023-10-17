@@ -23,14 +23,14 @@ from datetime import datetime
 
 class Trainer(ABC):
 
-    def __init__(self, config: Dict, model: Model, logger: Logger) -> None:
-        self._setup(model, config, logger)
+    def __init__(self, config: Dict, model: Model = None, logger: Logger = None) -> None:
+        config = self.parse_config(config)
+        self._setup(config, model, logger)
     
     def fit(self, num_train_steps: int=None, trainer_state=None) -> None:
         self.num_train_steps = num_train_steps or self.config['num_train_steps']
-        self._init_trainer_state(trainer_state)
     
-        self.before_train() # will load trainer checkpoint if needed
+        self.before_train(trainer_state) # will load trainer checkpoint if needed
         with self.terminal_display:
             while not self.train_end:
                 self.before_epoch()
@@ -45,7 +45,7 @@ class Trainer(ABC):
         self.after_train() 
     
 
-    def train_step(self, batch, batch_idx):
+    def train_step(self, batch, batch_idx=None):
         train_step_output = self.model.training_step(batch, batch_idx)
         self.train_log.append({'step': self.step, 'log': train_step_output})
 
@@ -73,6 +73,12 @@ class Trainer(ABC):
                 eval_step_output = self.model.evaluation_step(eval_data)
                 self.eval_log.append({'step': self.step, 'log': eval_step_output})
     
+    def set_model(self, model: Model) -> None:
+        self.model = model
+
+    def set_logger(self, logger: Logger) -> None:
+        self.logger = logger
+
     @abstractmethod
     def setup_data(self, config: Dict) -> None:
         """
@@ -99,10 +105,16 @@ class Trainer(ABC):
     def after_epoch(self):
         pass
 
-    def before_train(self):
+    def before_train(self, trainer_state: Dict =None):
         """
         Callbacks before training starts
         """
+        self.init_trainer_state(trainer_state)
+
+        # Make sure the model and logger are set
+        assert self.model is not None, "Model not set. Use trainer.set_model(model) to do so."
+        assert self.logger is not None, "Logger not set. Use trainer.set_logger(logger) to do so"
+
         self._setup_terminal_display(self.config)
         self._set_seeds(self.config)
         # Optionally load from checkpoint
@@ -146,7 +158,10 @@ class Trainer(ABC):
 
     #############################
 
-    def _init_trainer_state(self, state_dict=None):
+    def parse_config(self, config: Dict) -> Dict:
+        return config
+
+    def init_trainer_state(self, state_dict=None):
         state_dict = state_dict or {}
         # Load from state_dict or initialize for start of training
         self.step = state_dict.get('step', 0)
@@ -155,7 +170,7 @@ class Trainer(ABC):
         self.train_end = state_dict.get('train_end', False)
         self.num_checkpoint_loads = state_dict.get('num_checkpoint_loads', 0)
 
-    def _setup(self, model, config: Dict, logger=None) -> None:
+    def _setup(self, config: Dict = None, model: Model = None, logger: Logger =None) -> None:
         self.config = config
 
         self.device = torch.device(config.get('device', 
@@ -234,7 +249,7 @@ class Trainer(ABC):
             self.logger.restore_checkpoint()
             # Load the trainer state
             trainer_state_dict = torch.load(f'{self.logger.logdir}/checkpoint/trainer_chkpt.pt')
-            self._init_trainer_state(trainer_state_dict)
+            self.init_trainer_state(trainer_state_dict)
             # Load the model state
             self.model.load_model(f'{self.logger.logdir}/checkpoint/model_chkpt.pt')
             # Log the checkpoint load event
