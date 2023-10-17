@@ -3,53 +3,6 @@ import numpy as np
 from einops import rearrange
 
 
-class TrainerEnv(gym.Wrapper):
-
-    def __init__(self, env_fns, vec_env=True):
-        """
-        If vec_env is true, the env is wrapped as VecEnv even if there is only one env
-        If vec_env is false:
-                if len(env_fns) > 1: the env is wrapped as VecEnv
-                if len(env_fns) == 1: the env is not wrapped as VecEnv (it's just env_fns())
-        """
-        self.env = self._maybe_vec_wrap_envs(env_fns, vec_env)
-
-    def _maybe_vec_wrap_envs(self, env_fns, vec_env=True):
-        """
-        env_fns: A list of environment constructor functions. Can be single env too
-        vec_env: 
-                If true/false and len(env_fns) > 1: returns a vectorized env
-                If true and len(env_fns) == 1: returns a vectorized env
-                If false and len(env_fns) == 1: returns a single env
-                
-        """
-        if isinstance(env_fns, list) and len(env_fns) > 1:
-            # Always vectorize if multiple envs are given
-            return VecEnvWrapper(env_fns)
-
-        if vec_env:
-            # Vectorize even if single env is given
-            env_fns = env_fns if isinstance(env_fns, list) else [env_fns]
-            return VecEnvWrapper(env_fns)
-        
-        return env_fns() # Return single env
-
-
-    def get_env_shapes(self):
-        # Model needs env information to set up obs_space, action_space etc
-        obs_shape = self.env.observation_space.shape
-        action_shape = self.env.action_space.shape
-        if isinstance(self.env, VecEnvWrapper):
-            obs_shape = self.env.base_observation_space
-            action_shape = self.env.base_action_space
-        elif isinstance(self.env, (gym.vector.AsyncVectorEnv, gym.vector.SyncVectorEnv, gym.vector.VectorEnv)):
-            obs_shape = obs_shape[1:] # skip the num_envs dimension
-            action_shape = action_shape[1:] # skip the num_envs dimension
-        else:
-            ValueError("The env must be wrapped in a VecEnvWrapper")
-        return {'obs_shape': obs_shape, 'action_shape': action_shape}
-
-
 class VecEnvWrapper(gym.Wrapper):
     """
     A wrapper to vectorize environments
@@ -91,3 +44,57 @@ class VecEnvWrapper(gym.Wrapper):
     def base_action_space(self):
         return self.action_space.shape[1:] # Skip num_envs dimension
             
+
+
+class TrainerEnv(gym.Wrapper):
+    VEC_ENV_TYPES = (VecEnvWrapper, gym.vector.AsyncVectorEnv, gym.vector.SyncVectorEnv, gym.vector.VectorEnv)
+
+    def __init__(self, env_fns, vec_env=True):
+        """
+        If vec_env is true, the env is wrapped as VecEnv even if there is only one env
+        If vec_env is false:
+                if len(env_fns) > 1: the env is wrapped as VecEnv
+                if len(env_fns) == 1: the env is not wrapped as VecEnv (it's just env_fns())
+        """
+        self.env = self._maybe_vec_wrap_envs(env_fns, vec_env)
+
+        if not isinstance(self.env, self.VEC_ENV_TYPES):
+            self.num_envs = 1
+            self.envs = [self.env]
+
+    def _maybe_vec_wrap_envs(self, env_fns, vec_env=True):
+        """
+        env_fns: A list of environment constructor functions. Can be single env too
+        vec_env: 
+                If true/false and len(env_fns) > 1: returns a vectorized env
+                If true and len(env_fns) == 1: returns a vectorized env
+                If false and len(env_fns) == 1: returns a single env
+                
+        """
+        if isinstance(env_fns, list) and len(env_fns) > 1:
+            # Always vectorize if multiple envs are given
+            return VecEnvWrapper(env_fns)
+
+        if vec_env:
+            # Vectorize even if single env is given
+            env_fns = env_fns if isinstance(env_fns, list) else [env_fns]
+            return VecEnvWrapper(env_fns)
+        
+        return env_fns() # Return single env
+
+
+    def get_env_shapes(self):
+        # Model needs env information to set up obs_space, action_space etc
+        obs_shape = self.env.observation_space.shape
+        action_shape = self.env.action_space.shape
+        if isinstance(self.env, VecEnvWrapper):
+            obs_shape = self.env.base_observation_space
+            action_shape = self.env.base_action_space
+        elif isinstance(self.env, (gym.vector.AsyncVectorEnv, gym.vector.SyncVectorEnv, gym.vector.VectorEnv)):
+            obs_shape = obs_shape[1:] # skip the num_envs dimension
+            action_shape = action_shape[1:] # skip the num_envs dimension
+        else:
+            ValueError("The env must be wrapped in a VecEnvWrapper")
+        return {'obs_shape': obs_shape, 'action_shape': action_shape}
+
+
