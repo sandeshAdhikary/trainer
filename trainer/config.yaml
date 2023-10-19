@@ -2,4 +2,3 @@ models:
   SimpleMLModel: trainer.tests.ml_trainer
 trainers:
   MLTrainer: trainer.tests.ml_trainer
-  that: those
