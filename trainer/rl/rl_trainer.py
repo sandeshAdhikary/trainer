@@ -154,7 +154,7 @@ class RLTrainer(Trainer, ABC):
                 # Launch asynchronous processs to evaluate the model
                 self.eval_output_file = os.path.join(eval_chkpt_dir, 'eval_out')
                 self.eval_log_file = os.path.join(eval_chkpt_dir, 'eval_log')
-                command = f"""python -m src.rl_evaluator \
+                command = f"""python -m trainer.rl_evaluator \
                     --trainer_info {os.path.join(eval_chkpt_dir, 'eval_trainer_info.pkl')} \
                     --eval_checkpoint {os.path.join(eval_chkpt_dir, 'state_dicts.zip')} \
                     --eval_log_file {self.eval_log_file} \
