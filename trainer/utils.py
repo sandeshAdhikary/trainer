@@ -9,24 +9,27 @@ from warnings import warn
 
 def register_class(class_type, name, module):
     assert class_type in ['trainer', 'model']
-    with open('trainer/config.yaml', 'r') as f:
-        yaml_dict = yaml.load(f, Loader=yaml.SafeLoader)
-    with open('trainer/config.yaml', 'w') as f:
-        yaml_dict[class_type + 's'][name] = module
-        yaml.dump(yaml_dict, f)
+    with open(files('trainer').joinpath('config.yaml'), 'r') as f:
+        pkg_config = yaml.safe_load(f)
+    pkg_config = pkg_config or {}
+    with open(files('trainer').joinpath('config.yaml'), 'w') as f:
+        pkg_config[class_type + 's'] = pkg_config.get(class_type + 's') or {}
+        pkg_config[class_type + 's'][name] = module
+        yaml.safe_dump(pkg_config, f)
 
 def import_registered_classes(globals):
     with open(files('trainer').joinpath('config.yaml')) as f:
         pkg_config = yaml.load(f, Loader=yaml.FullLoader)
-
-    # Import registered models
-    for module_type in ['models', 'trainers']:
-        for name, module in pkg_config[module_type].items():
-            try:
-                module_obj = importlib.import_module(module)
-                globals.update({name: getattr(module_obj, name)})    
-            except ModuleNotFoundError:
-                warn(f"Could not import module {module}", stacklevel=2)
+    if pkg_config is not None:
+        # Import registered models
+        for module_type in ['models', 'trainers']:
+            if pkg_config.get(module_type) is not None:
+                for name, module in pkg_config[module_type].items():
+                    try:
+                        module_obj = importlib.import_module(module)
+                        globals.update({name: getattr(module_obj, name)})    
+                    except ModuleNotFoundError:
+                        warn(f"Could not import module {module}", stacklevel=2)
 
 def set_seed_everywhere(seed):
     """
