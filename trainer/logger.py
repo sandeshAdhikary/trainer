@@ -1,13 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Union
-import torch
-import torchvision
 from einops import rearrange
 import wandb
 import os
-import json
-from collections import defaultdict
-from termcolor import colored
 # from trainer.defaults import DEFAULTS
 import zipfile
 from warnings import warn
@@ -15,7 +10,7 @@ import trainer.utils as utils
 import shutil
 
 class Logger(ABC):
-    def __init__(self, config: dict) -> None:
+    def __init__(self, config: Dict) -> None:
         config = self.parse_config(config)
         self.project = config.get('project', 'misc')
         self.dir =  os.path.abspath(config.get('dir', './logdir'))

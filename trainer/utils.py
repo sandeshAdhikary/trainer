@@ -2,6 +2,17 @@ import random
 import numpy as np
 import torch
 import os
+import yaml
+import importlib
+
+def import_registered_classes():
+    with open('trainer/.config.yaml') as f:
+        yaml_dict = yaml.load(f, Loader=yaml.FullLoader)
+    # Import registered models
+    models = yaml_dict['models']
+    for name, module in models.items():
+        module_obj = importlib.import_module(module)
+        globals().update({name: getattr(module_obj, name)})
 
 def set_seed_everywhere(seed):
     """
