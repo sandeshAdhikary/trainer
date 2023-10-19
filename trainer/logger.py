@@ -14,94 +14,12 @@ from warnings import warn
 import trainer.utils as utils
 import shutil
 
-FORMAT_CONFIG = {
-    'rl': {
-        'train': [
-            ('episode', 'E', 'int'), ('step', 'S', 'int'), 
-            ('duration', 'D', 'time'), ('episode_reward', 'R', 'float'),
-            ('batch_reward', 'BR', 'float'), ('actor_loss', 'ALOSS', 'float'),
-            ('critic_loss', 'CLOSS', 'float'), ('ae_loss', 'RLOSS', 'float'),
-            ('max_rat', 'MR', 'float')
-        ],
-        'eval': [('step', 'S', 'int'), ('episode_reward', 'ER', 'float')]
-    }
-}
-
-class AverageMeter(object):
-    def __init__(self):
-        self._sum = 0
-        self._count = 0
-
-    def update(self, value, n=1):
-        self._sum += value
-        self._count += n
-
-    def value(self):
-        return self._sum / max(1, self._count)
-
-
-class MetersGroup(object):
-    def __init__(self, file_name, formating):
-        self._file_name = file_name
-        if os.path.exists(file_name):
-            os.remove(file_name)
-        self._formating = formating
-        self._meters = defaultdict(AverageMeter)
-
-    def log(self, key, value, n=1):
-        self._meters[key].update(value, n)
-
-    def _prime_meters(self):
-        data = dict()
-        for key, meter in self._meters.items():
-            if key.startswith('train'):
-                key = key[len('train') + 1:]
-            else:
-                key = key[len('eval') + 1:]
-            key = key.replace('/', '_')
-            data[key] = meter.value()
-        return data
-
-    def _dump_to_file(self, data):
-        with open(self._file_name, 'a') as f:
-            f.write(json.dumps(data) + '\n')
-
-    def _format(self, key, value, ty):
-        template = '%s: '
-        if ty == 'int':
-            template += '%d'
-        elif ty == 'float':
-            template += '%.04f'
-        elif ty == 'time':
-            template += '%.01f s'
-        else:
-            raise 'invalid format type: %s' % ty
-        return template % (key, value)
-
-    def _dump_to_console(self, data, prefix):
-        prefix = colored(prefix, 'yellow' if prefix == 'train' else 'green')
-        pieces = ['{:5}'.format(prefix)]
-        for key, disp_key, ty in self._formating:
-            value = data.get(key, 0)
-            pieces.append(self._format(disp_key, value, ty))
-        print('| %s' % (' | '.join(pieces)))
-
-    def dump(self, step, prefix):
-        if len(self._meters) == 0:
-            return
-        data = self._prime_meters()
-        data['step'] = step
-        self._dump_to_file(data)
-        self._dump_to_console(data, prefix)
-        self._meters.clear()
-
-
 class Logger(ABC):
     def __init__(self, config: dict) -> None:
         config = self.parse_config(config)
         self.project = config.get('project', 'misc')
         self.dir =  os.path.abspath(config.get('dir', './logdir'))
-
+        self.video_log_freq = config['video_log_freq']
         # Make sure self.dir is writable
         if not utils.is_directory_writable(self.dir):
             raise ValueError("Directory %s is not writable!" % self.dir)
@@ -139,17 +57,7 @@ class Logger(ABC):
             self.run_name = self._sw.name
         
         self.logdir = self._sw.dir
-        
-        format_config = config.get('format_config', 'rl')
-        self._train_mg = MetersGroup(
-            os.path.join(self.logdir, 'train.log'),
-            formating=FORMAT_CONFIG[format_config]['train']
-        )
-        self._eval_mg = MetersGroup(
-            os.path.join(self.logdir, 'eval.log'),
-            formating=FORMAT_CONFIG[format_config]['eval']
-        )
-
+    
 
     def log(self, **kwargs):
         log_dict = kwargs.get('log_dict')
@@ -183,13 +91,16 @@ class Logger(ABC):
             config['tags']  = [item.strip() for item in config['tags'] .split(',')]
 
         # Set logger_video_log_freq
-        if config.get('logger_video_log_freq') in [None, 'none', 'None']:
+        if config.get('video_log_freq') in [None, 'none', 'None']:
             # Set logger_video_log_freq so we get max num_video_logs videos per run
             num_video_logs = config.get('num_video_logs', 5)
             num_evals = int(config['num_train_steps'] // config['eval_freq'])
-            config['logger_video_log_freq'] = max(int(num_evals / num_video_logs), 1)
+            config['video_log_freq'] = max(int(num_evals / num_video_logs), 1)
 
         return config
+
+    def log_video(self, key, frames, step, image_mode='hwc'):
+        self._try_sw_log_video(key, frames, step, image_mode)
 
     ########################################
     # Summary writer specific functions ####
@@ -249,7 +160,16 @@ class Logger(ABC):
                 restore_error = True
         return restore_error
 
-
+    def _try_sw_log_video(self, key, frames, step, image_mode='hwc'):
+        if self.sw_type == 'tensorboard':
+            raise NotImplementedError("Tensorboard logger not implemented")
+        elif self.sw_type == 'wandb':
+            import numpy as np
+            frames = np.array(frames)
+            if image_mode == 'hwc':
+                frames = rearrange(frames, 't h w c -> t c h w')
+            frames = frames[:,:,::self.img_downscale_factor,::self.img_downscale_factor]
+            self._sw.log({key: wandb.Video(frames, fps=1)}, step=step)
 
 
     
@@ -269,17 +189,7 @@ class Logger(ABC):
     #         image = image[:,::self.img_downscale_factor,::self.img_downscale_factor]
     #         self._sw.log({key: [wandb.Image(image)]}, step=step)
 
-    # def _try_sw_log_video(self, key, frames, step, image_mode='hwc'):
-    #     if self.sw_type == 'tensorboard':
-    #         frames = torch.from_numpy(np.array(frames))
-    #         frames = frames.unsqueeze(0)
-    #         self._sw.add_video(key, frames, step)
-    #     elif self.sw_type == 'wandb':
-    #         frames = np.array(frames)
-    #         if image_mode == 'hwc':
-    #             frames = rearrange(frames, 't h w c -> t c h w')
-    #         frames = frames[:,:,::self.img_downscale_factor,::self.img_downscale_factor]
-    #         self._sw.log({key: wandb.Video(frames, fps=1)}, step=step)
+
 
     # def _try_sw_log_histogram(self, key, histogram, step):
     #     if self.sw_type == 'tensorboard':
@@ -326,9 +236,7 @@ class Logger(ABC):
     #     assert key.startswith('train') or key.startswith('eval')
     #     self._try_sw_log_image(key, image, step, image_mode)
 
-    # def log_video(self, key, frames, step, image_mode='hwc'):
-    #     assert key.startswith('train') or key.startswith('eval')
-    #     self._try_sw_log_video(key, frames, step, image_mode)
+
 
     # def log_histogram(self, key, histogram, step):
     #     assert key.startswith('train') or key.startswith('eval')

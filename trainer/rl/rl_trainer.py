@@ -4,6 +4,13 @@ from typing import Dict
 from abc import ABC, abstractmethod
 from trainer.rl.replay_buffers import ReplayBuffer
 import numpy as np
+from einops import rearrange
+import os
+import multiprocessing as mp
+import pickle
+import subprocess
+import shutil
+import re
 
 class RLTrainer(Trainer, ABC):
 
@@ -20,7 +27,18 @@ class RLTrainer(Trainer, ABC):
             batch_size=config['batch_size'],
             device=self.device,
         )
+
+        # Set up other config
+        self.num_eval_episodes = self.config.get('num_eval_episodes', 3)
+        
     
+    def _setup_terminal_display(self, config: Dict) -> None:
+        super()._setup_terminal_display(config)
+        if self.progress is not None:
+            # Add evaluation progress bar
+            self.progress_eval = self.progress.add_task("[green] Evaluating...", 
+                                                        total=self.eval_env.max_episode_steps * self.num_eval_episodes)
+
     @abstractmethod
     def env_fns(self, config):
         """
@@ -31,7 +49,7 @@ class RLTrainer(Trainer, ABC):
 
     def _setup_env(self, env_config):
         env_fn, eval_env_fn = self.env_fns(env_config)
-        self.env = TrainerEnv(env_fn, vec_env=False)
+        self.env = TrainerEnv(env_fn)
         self.eval_env = TrainerEnv(eval_env_fn)
 
     def fit(self, num_train_steps: int=None, trainer_state=None) -> None:
@@ -54,14 +72,221 @@ class RLTrainer(Trainer, ABC):
                 else:
                     # update trainer state
                     self.after_step()
+                self.evaluate(training_mode=True, async_eval=self.async_eval)
                 self.after_epoch({'rollout': rollout_data, 'num_updates': num_updates})
-                # self.evaluate(self.eval_data, training_mode=True)
                 
         self.after_train() 
 
-    def after_epoch(self, epoch_info=None):
-        super().after_epoch(epoch_info)
+    def _create_checkpoint_files(self, chkpt_name='checkpoint', chkpt_dir=None, save_buffer=False):
+        super()._create_checkpoint_files(chkpt_name, chkpt_dir)
+        # Save replay buffer 
+        if save_buffer:
+            pass
+                                                
 
+
+    def evaluate(self, max_ep_steps=None, training_mode=False, async_eval=False, eval_log_file=None, eval_output_file=None):
+        """"
+        Evaluation outputs are written onto a global dict
+        to allow for asynchronous evaluation
+        """
+    
+        run_eval = True
+        if training_mode:
+            run_eval = (self.step > self.config['init_steps']) and (self.epoch % self.eval_freq == 0) 
+
+        if run_eval:
+            self.model.eval()
+            evaluation_fn = self.evaluate_vec if self.env.is_vec_env else self.evaluate_nonvec
+            if async_eval:
+                
+                # Check if there is an existing evaluation in progress
+                if hasattr(self, 'eval_job') and self.eval_job is not None:
+                    eval_job_status = self.eval_job.poll()
+                    if eval_job_status is None:
+                        # Wait for the previous job to finish
+                        # print("Waiting for previous evaluation...")
+                        eval_job_status = self.eval_job.poll()
+                        while eval_job_status is None:
+                            if os.path.exists(self.eval_log_file):
+                                with open(self.eval_log_file, 'r') as f:
+                                    try:
+                                        step = f.readlines()[-1].strip("step:")
+                                        step = float(re.sub(r'[\t\n]', '', step))
+                                        if hasattr(self, 'progress_eval'):
+                                            self.progress.update(self.progress_eval, completed=step)
+                                    except IndexError:
+                                        pass 
+                            eval_job_status = self.eval_job.poll()
+
+                    if eval_job_status == 0:
+                        # Evaluation ended without errors
+                        # self.eval_output_file = self.eval_job.args.split("--eval_output_file ")[-1].split(" ")[0]
+                        eval_step = self.eval_job.args.split("--step ")[-1].split(" ")[0]
+                        eval_step = re.sub(r'[\t\n]', '', eval_step)
+                        with open(self.eval_output_file, 'rb') as f:
+                            eval_output = pickle.load(f)
+
+                        self.eval_log.append({'step': eval_step, 'log': eval_output})
+                        # print("Evaluation complete")
+                        self.eval_job = None
+                        
+                    else:
+                            err_file = os.path.join(self.logger.logdir, 'error_log.txt')
+                            with open(err_file, 'w') as f:
+                                for line in self.eval_job.stderr:
+                                    f.writelines(line)
+                            raise SystemError(f"Evaluation ended with errors. See {err_file} for details")
+                    
+                # Create a dir to save eval_checkpoints
+                eval_chkpt_dir = os.path.join(self.logger.logdir, 'eval_checkpoint')
+                os.makedirs(eval_chkpt_dir, exist_ok=True)
+                
+                # Save state dicts
+                self._save_checkpoint(chkpt_name='state_dicts', chkpt_dir=eval_chkpt_dir, log_checkpoint=False)
+                # Save trainer and model info so we can import them again
+                trainer_info = {'trainer_class': self.__class__, 
+                                'model_class': self.model.__class__,
+                                'trainer_config': self.config,
+                                'model_config': self.model.config}
+                with open(os.path.join(eval_chkpt_dir, "eval_trainer_info.pkl"), 'wb') as f:
+                    pickle.dump(trainer_info, f)
+                # Launch asynchronous processs to evaluate the model
+                self.eval_output_file = os.path.join(eval_chkpt_dir, 'eval_out')
+                self.eval_log_file = os.path.join(eval_chkpt_dir, 'eval_log')
+                command = f"""python -m src.rl_evaluator \
+                    --trainer_info {os.path.join(eval_chkpt_dir, 'eval_trainer_info.pkl')} \
+                    --eval_checkpoint {os.path.join(eval_chkpt_dir, 'state_dicts.zip')} \
+                    --eval_log_file {self.eval_log_file} \
+                    --eval_output_file {self.eval_output_file} \
+                    --step {self.step}
+                    """
+                self.eval_job = subprocess.Popen(
+                    command,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True  # Enable text mode (for string output)
+                )
+
+            else:
+                eval_step_output = evaluation_fn(eval_log_file=eval_log_file, max_ep_steps=max_ep_steps, eval_output_file=eval_output_file)
+                if hasattr(self, 'eval_log'):
+                    self.eval_log.append({'step': self.step, 'log': eval_step_output})
+                if hasattr(self, 'progress_eval'):
+                    self.progress.update(self.progress_eval, completed=0)
+
+    def evaluate_nonvec(self, max_ep_steps=None, eval_log_file=None):
+        """
+        Evaluation step for non-vectorized environments
+        """
+        raise NotImplementedError
+
+    def evaluate_vec(self, max_ep_steps=None, eval_log_file=None, eval_output_file=None):
+        """
+        Evaluation step for vectorized environments
+        if eval_log_file is provided, write evaluation metrics to file
+        """
+        eval_info = {}
+
+        eval_env = self.eval_env
+
+        max_ep_steps = max_ep_steps or eval_env.max_episode_steps
+        num_frames = eval_env.frames
+
+        obses = []       
+
+        # eval_env.max_episode_steps * 
+
+        obs, info = eval_env.reset() # obs: (num_env, *obs_shape)
+        dones = [False] * eval_env.num_envs
+        episode_reward_list = []
+        steps = 0
+        steps_to_keep = [None]*eval_env.num_envs
+        num_eps = [0]*eval_env.num_envs
+
+        # Create a tmp file to write progress to
+        max_steps = self.num_eval_episodes*max_ep_steps
+
+        # Eval log context
+        for i in range(max_steps):
+            if eval_log_file is not None:
+                with open(eval_log_file, 'a') as f:
+                    f.write(f"step:{i}\n")
+
+            if hasattr(self, 'progress_eval'):
+                self.progress.update(self.progress_eval, completed=i)
+
+            # No  need to reset again since vec_env resets individual envs automatically
+            if None not in steps_to_keep:
+                # All envs have completed max_eps
+                if eval_log_file is not None:
+                    with open(eval_log_file, 'a') as f:
+                        f.write(f"step:{max_steps}\n")
+                break
+            steps += 1
+            # Get actions for all envs
+            action = self.model.select_action(obs, batched=True)
+
+            obses.append(obs)
+
+            obs, reward, terminated, truncated, info = eval_env.step(action)
+            dones = [x or y for (x,y) in zip(terminated, truncated)]
+    
+            for ide in range(eval_env.num_envs):
+                if dones[ide]:
+                    num_eps[ide] += 1
+
+                if num_eps[ide] >= self.num_eval_episodes:
+                    steps_to_keep[ide] = steps
+            # if (self.eval_calls % self.log_video_freq == 0) or self.training_done:
+            #     video.record(env)
+            episode_reward_list.append(reward)
+
+        # if (self.eval_calls % self.log_video_freq == 0) or self.training_done:
+        #     video.save('%d.mp4' % step)
+        #     if len(video.frames) > 0:
+        #         L.log_video('eval/video', video.frames, step)
+        episode_reward_list = np.array(episode_reward_list)
+
+        max_steps = episode_reward_list.shape[0]
+        mask = [np.pad(np.ones(n), (0, max_steps-n),mode='constant') for n in steps_to_keep]
+        mask = np.stack(mask, axis=1)
+        episode_reward_list *= mask
+
+        # Log video of evaluation observations
+        obses = np.stack(obses) # (steps, num_envs, *obs_shape)
+        # Stack frames horizontally; Stack episodes along batches
+        obses = rearrange(obses, 'b n (f c) h w -> b c (n h) (f w)', f=len(num_frames)) 
+        # if (self.epoch % self.logger.video_log_freq == 0) or self.train_end:
+        #     eval_info['obs_video'] = obses
+
+            # self.logger.log_video(key='eval/obs_video', frames=obses, image_mode='chw', step=self.step)
+
+
+        # Get average episode reward for each environment
+        avg_env_episode_rewards = np.sum(episode_reward_list, axis=0)/self.num_eval_episodes
+        eval_info['avg_env_episode_rewards'] = avg_env_episode_rewards
+        # Log performance for each environment
+        # self.log_performance(avg_env_episode_rewards, L, step)
+
+
+        # eval_episode_reward is the episode reward only from the first env
+        # since first env has the same config as the training env
+        eval_episode_reward = avg_env_episode_rewards[0]
+        eval_info['episode_reward'] = eval_episode_reward
+
+        # L.log('eval/episode_reward', eval_episode_reward, step)
+        if eval_output_file is not None:
+            # Write the eval results to file
+            with open(eval_output_file, 'wb') as f:
+                pickle.dump(eval_info, f)
+
+
+        return eval_info
+
+
+    def after_epoch(self, epoch_info=None):
         # Update state from rollout data
         rollout_data = epoch_info['rollout']
         # Update trainer state
@@ -69,6 +294,7 @@ class RLTrainer(Trainer, ABC):
         self.obs = rollout_data['next_obs']
         self.done = rollout_data['terminated'] | rollout_data['truncated']
         self.step += rollout_data['num_steps']
+        self.epoch += 1
         self.num_model_updates += epoch_info['num_updates']
         self.current_episode_reward += self.reward
         
@@ -96,12 +322,14 @@ class RLTrainer(Trainer, ABC):
                         # Clear current episode reward tracker if done
                         self.current_episode_reward[idx] = 0
 
+
+        self.log_epoch(epoch_info)
             # Call training callback
             # TODO: Add training callback
 
     def log_step(self, info=None):
         pass
-    
+
     def log_epoch(self, info=None):
         # Log episode metrics when an episode is done
         ep_done = any(self.done) if self.env.is_vec_env else self.done
@@ -109,10 +337,27 @@ class RLTrainer(Trainer, ABC):
             # Log episode rewards (if all envs have completed at least one episode)
             if (self.step > 0) and (all([x >=1 for x in self.num_episodes])):
                 avg_ep_reward = np.mean([x[-1] for x in self.episode_reward_list])
-                self.logger.log(key='train/episode_reward', value=avg_ep_reward, step=self.step)
-        # Log metrics from train_log
-        self.logger.log(key='train/episode', value=sum(self.num_episodes), step=self.step)
-        self.logger.log(key='train/num_model_updates', value=self.num_model_updates, step=self.step)
+                self.logger.log(log_dict={'trainer_step': self.step,
+                                 'train/episode_reward': avg_ep_reward})
+        
+        self.logger.log(log_dict={'trainer_step': self.step,
+                         'train/episode': sum(self.num_episodes)})
+        self.logger.log(log_dict={'trainer_step': self.step,
+                         'train/num_model_updates': self.num_model_updates})
+
+        if hasattr(self, 'eval_job') and (self.eval_job is not None):
+            if os.path.exists(self.eval_log_file):
+                with open(self.eval_log_file, 'r') as f:
+                    step = f.readlines()[-1].strip("step:")
+                    step = float(re.sub(r'[\t\n]', '', step))
+                if hasattr(self, 'progress_eval'):
+                    self.progress.update(self.progress_eval, completed=step)
+
+        # Log eval metrics
+        if len(self.eval_log) > 0:
+            last_item = self.eval_log[-1]
+            self.logger.log(log_dict={'eval_step': int(last_item['step']),
+                                        'eval/episode_reward': float(last_item['log']['episode_reward'])})
 
     def log_train(self, info=None):
         pass
@@ -122,7 +367,7 @@ class RLTrainer(Trainer, ABC):
         if self.step < self.config['init_steps']:
             action = self.env.action_space.sample()
         else:
-            action = self.model.model.sample_action(obs, batched=self.env.is_vec_env)
+            action = self.model.sample_action(obs, batched=self.env.is_vec_env)
         
         # Env Step
         next_obs, reward, terminated, truncated, info = self.env.step(action)
@@ -169,3 +414,4 @@ class RLTrainer(Trainer, ABC):
         self.current_episode_reward = np.zeros(self.env.num_envs)
         self.episode_reward_list = [[] for _ in range(self.env.num_envs)]
         self.num_model_updates = 0
+

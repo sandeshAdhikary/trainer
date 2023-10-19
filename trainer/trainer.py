@@ -20,11 +20,12 @@ import shutil
 from warnings import warn
 from contextlib import nullcontext
 from datetime import datetime
+from tempfile import TemporaryDirectory
 
 class Trainer(ABC):
 
     def __init__(self, config: Dict, model: Model = None, logger: Logger = None) -> None:
-        config = self.parse_config(config)
+        self.config = self.parse_config(config)
         self._setup(config, model, logger)
     
     def fit(self, num_train_steps: int=None, trainer_state=None) -> None:
@@ -128,6 +129,7 @@ class Trainer(ABC):
         self.log_train(info)
 
     def after_epoch(self, info=None):
+        self.epoch += 1
         self.log_epoch(info)
 
 
@@ -140,7 +142,8 @@ class Trainer(ABC):
         if self.progress is not None:
             self.progress.update(self.progress_train, completed=self.step)
         # Save checkpoint
-        self._save_checkpoint()
+        if (self.save_checkpoint_freq is not None) and (self.step % self.save_checkpoint_freq == 0) and (self.step > 0):
+            self._save_checkpoint()
 
 
     def log_step(self, info=None):
@@ -159,7 +162,6 @@ class Trainer(ABC):
 
 
     def update_trainer_state(self):
-        self.step += 1
         # Check if training is complete
         if self.step >= self.num_train_steps:
             self.train_end = True
@@ -174,13 +176,13 @@ class Trainer(ABC):
         state_dict = state_dict or {}
         # Load from state_dict or initialize for start of training
         self.step = state_dict.get('step', 0)
+        self.epoch = state_dict.get('epoch', 0)
         self.train_log = state_dict.get('train_log', deque(maxlen=self.log_length_train))
         self.eval_log = state_dict.get('eval_log', deque(maxlen=self.log_length_eval))
         self.train_end = state_dict.get('train_end', False)
         self.num_checkpoint_loads = state_dict.get('num_checkpoint_loads', 0)
 
     def _setup(self, config: Dict = None, model: Model = None, logger: Logger =None) -> None:
-        self.config = config
 
         self.device = torch.device(config.get('device', 
                                               'cuda' if torch.cuda.is_available() else 'cpu')
@@ -252,48 +254,51 @@ class Trainer(ABC):
         if seed:
             utils.set_seed_everywhere(seed)
 
-    def _load_checkpoint(self):
+    def _load_checkpoint(self, chkpt_name='checkpoint', log_checkpoint=True):
         # Download checkpoint from logger
         try:
             self.logger.restore_checkpoint()
             # Load the trainer state
-            trainer_state_dict = torch.load(f'{self.logger.logdir}/checkpoint/trainer_chkpt.pt')
+            trainer_state_dict = torch.load(f'{self.logger.logdir}/checkpoint/trainer_{chkpt_name}.pt')
             self.init_trainer_state(trainer_state_dict)
             # Load the model state
-            self.model.load_model(f'{self.logger.logdir}/checkpoint/model_chkpt.pt')
-            # Log the checkpoint load event
-            self.num_checkpoint_loads += 1
-            self.logger.log(key='train/num_checkpoint_loads', value=self.num_checkpoint_loads, step=self.logger._sw.step)
+            self.model.load_model(f'{self.logger.logdir}/checkpoint/model_{chkpt_name}.pt')
+            if log_checkpoint:
+                # Log the checkpoint load event
+                self.num_checkpoint_loads += 1
+                self.logger.log(key='train/num_checkpoint_loads', value=self.num_checkpoint_loads, step=self.logger._sw.step)
         except (UserWarning, Exception) as e:
             warn("Could not restore checkpoint.")
         
 
-    def _save_checkpoint(self):
+    def _save_checkpoint(self, chkpt_name='checkpoint', chkpt_dir=None, log_checkpoint=True):
         """
         Zip the checkpoint folder and log it
         """
-        if (self.save_checkpoint_freq is not None) and (self.step % self.save_checkpoint_freq == 0) and (self.step > 0):
-            self._create_checkpoint_files()
-            # Compress checkpoint folder to a single file. Then delete the chkpt directory
-            chkpt_dir = os.path.join(self.logger.logdir,'checkpoint')
-            shutil.make_archive(base_name=chkpt_dir,
+        # Set up the checkpoint directory where the zip file will be saved
+        chkpt_dir = chkpt_dir or self.logger.logdir 
+        if not os.path.exists(chkpt_dir):
+            os.makedirs(chkpt_dir, exist_ok=True)
+
+        with TemporaryDirectory() as tmp_dir:            
+            # Create checkpoint files in tmp_dir
+            self._create_checkpoint_files(chkpt_name, tmp_dir)
+            # Compress tmp_dir into a zip file saved in the chkpt_dir
+            shutil.make_archive(base_name=os.path.join(chkpt_dir, chkpt_name),
                                 format='zip', 
-                                base_dir='checkpoint',
-                                root_dir=self.logger.logdir)
-            # Delete the checkpoint dir once it has been zipped
-            shutil.rmtree(chkpt_dir)
-            # Log the checkpoint files to the logger
-            self.logger.log_checkpoint()
+                                root_dir=tmp_dir)
+            if log_checkpoint:
+                # Log the checkpoint files to the logger
+                self.logger.log_checkpoint()
 
 
-    def _create_checkpoint_files(self):
+    def _create_checkpoint_files(self, chkpt_name='checkpoint', chkpt_dir=None):
         """
         Custom Trainer class can add other checkpoint files here.
         The checkpoint files should have format {name}_chkpt.pt
         """
-
         # Create a (temporary) checkpoint directory
-        chkpt_dir = os.path.join(self.logger.logdir,'checkpoint')
+        chkpt_dir = chkpt_dir or os.path.join(self.logger.logdir, chkpt_name)
         if os.path.exists(chkpt_dir):
             # Delete the old checkpoint
             shutil.rmtree(chkpt_dir)
@@ -306,11 +311,9 @@ class Trainer(ABC):
                          'train_end': self.train_end,
                          'num_checkpoint_loads': self.num_checkpoint_loads
                         }
-        torch.save(trainer_state, os.path.join(chkpt_dir, 'trainer_chkpt.pt'))
-        with open(os.path.join(chkpt_dir, 'test.txt'), 'w') as f:
-            f.write(f"time: {datetime.now()}\n trainer_step: {self.step}")
+        torch.save(trainer_state, os.path.join(chkpt_dir, f'trainer_{chkpt_name}.pt'))
         # Save model state
-        self.model.save_model(os.path.join(chkpt_dir, 'model_chkpt.pt'))
+        self.model.save_model(os.path.join(chkpt_dir, f'model_{chkpt_name}.pt'))
 
 
 

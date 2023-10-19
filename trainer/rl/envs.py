@@ -61,6 +61,26 @@ class TrainerEnv(gym.Wrapper):
         if not isinstance(self.env, self.VEC_ENV_TYPES):
             self.num_envs = 1
             self.envs = [self.env]
+        self.set_base_attributes()
+        
+        
+    def set_base_attributes(self):
+        base_env = self.env.envs[0] if isinstance(self.env, self.VEC_ENV_TYPES) else self.env
+
+        attributes = ['max_episode_steps', 'frames']
+        for attr in attributes:
+            try:
+                setattr(self, attr, getattr(base_env, attr))
+                assert getattr(self, attr) is not None
+            except (AttributeError,AssertionError):
+                try:
+                    # The attribute may be private
+                    setattr(self, attr, getattr(base_env, f"_{attr}"))
+                    assert getattr(self, attr) is not None
+                except  (AttributeError,AssertionError):
+                    raise AttributeError(f"Env does not have {attr} or _{attr}")
+                
+
 
     @property
     def is_vec_env(self):
