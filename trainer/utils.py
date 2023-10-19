@@ -4,15 +4,29 @@ import torch
 import os
 import yaml
 import importlib
+from importlib.resources import files
+from warnings import warn
 
-def import_registered_classes():
-    with open('trainer/.config.yaml') as f:
-        yaml_dict = yaml.load(f, Loader=yaml.FullLoader)
+def register_class(class_type, name, module):
+    assert class_type in ['trainer', 'model']
+    with open('trainer/config.yaml', 'r') as f:
+        yaml_dict = yaml.load(f, Loader=yaml.SafeLoader)
+    with open('trainer/config.yaml', 'w') as f:
+        yaml_dict[class_type + 's'][name] = module
+        yaml.dump(yaml_dict, f)
+
+def import_registered_classes(globals):
+    with open(files('trainer').joinpath('config.yaml')) as f:
+        pkg_config = yaml.load(f, Loader=yaml.FullLoader)
+
     # Import registered models
-    models = yaml_dict['models']
-    for name, module in models.items():
-        module_obj = importlib.import_module(module)
-        globals().update({name: getattr(module_obj, name)})
+    for module_type in ['models', 'trainers']:
+        for name, module in pkg_config[module_type].items():
+            try:
+                module_obj = importlib.import_module(module)
+                globals.update({name: getattr(module_obj, name)})    
+            except ModuleNotFoundError:
+                warn(f"Could not import module {module}", stacklevel=2)
 
 def set_seed_everywhere(seed):
     """

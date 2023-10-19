@@ -2,12 +2,4 @@ models:
   SimpleMLModel: trainer.tests.ml_trainer
 trainers:
   MLTrainer: trainer.tests.ml_trainer
-
-# # WANDB
-# WANDB_API_KEY: null
-
-# # Database
-# DB_URL: null
-
-# # Logging
-# LOG_DIR: null
+  that: those

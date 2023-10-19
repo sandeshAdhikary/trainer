@@ -6,19 +6,14 @@ import yaml
 import argparse
 import pickle
 import zipfile
+from warnings import warn
+# Load all registered models and trainers
+# This is needed to load model/trainer classes from pickles
+from trainer.utils import import_registered_classes
+import_registered_classes(globals())
 
 if __name__ == "__main__":
 
-    # Load all models and 
-    # This is needed to load model/trainer classes from pickles
-    with open('trainer/.config.yaml') as f:
-        yaml_dict = yaml.load(f, Loader=yaml.FullLoader)
-    # Import registered models
-    for module_type in ['models', 'trainers']:
-        module_dict = yaml_dict[module_type]
-        for name, module in module_dict.items():
-            module_obj = importlib.import_module(module)
-            globals().update({name: getattr(module_obj, name)})    
 
     args = argparse.ArgumentParser()
     # logdir = "logdir/wandb/run-20231019_012741-fy9ilbkb/files"
