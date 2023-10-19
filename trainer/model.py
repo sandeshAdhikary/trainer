@@ -3,11 +3,13 @@ from typing import Dict, Union
 from types import SimpleNamespace
 import numpy as np
 import torch
+from trainer.utils import register_class
 
 class Model(ABC):
 
     def __init__(self, config):
         self.config = self.parse_config(config)
+        self._register_model()
 
     def parse_config(self, config: Dict) -> Union[SimpleNamespace, Dict]:
         """
@@ -50,3 +52,10 @@ class Model(ABC):
     def zero_grad(self):
         raise NotImplementedError
     
+    @property
+    def module_path(self):
+        return None
+
+    def _register_model(self):
+        if self.module_path is not None:
+            register_class('model', self.__class__.__name__, self.module_path)

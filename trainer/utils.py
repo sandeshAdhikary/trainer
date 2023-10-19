@@ -7,15 +7,30 @@ import importlib
 from importlib.resources import files
 from warnings import warn
 
-def register_class(class_type, name, module):
+def check_class_registration(pkg_config, class_type, name):
+    """
+    Check if a class with name has already been registered under class_type
+    """
+    if pkg_config is not None:
+        class_dict = pkg_config.get(class_type + 's')
+        if (class_dict is not None) and (name in class_dict.keys()):
+            return True
+    
+    return False
+
+def register_class(class_type, name, module, overwrite=False):
     assert class_type in ['trainer', 'model']
     with open(files('trainer').joinpath('config.yaml'), 'r') as f:
         pkg_config = yaml.safe_load(f)
     pkg_config = pkg_config or {}
-    with open(files('trainer').joinpath('config.yaml'), 'w') as f:
-        pkg_config[class_type + 's'] = pkg_config.get(class_type + 's') or {}
-        pkg_config[class_type + 's'][name] = module
-        yaml.safe_dump(pkg_config, f)
+    # Check if class has already been registered
+    already_registered = check_class_registration(pkg_config, class_type, name)
+    # Potentially register class in config
+    if (not already_registered) or (already_registered and overwrite):
+        with open(files('trainer').joinpath('config.yaml'), 'w') as f:
+            pkg_config[class_type + 's'] = pkg_config.get(class_type + 's') or {}
+            pkg_config[class_type + 's'][name] = module
+            yaml.safe_dump(pkg_config, f)
 
 def import_registered_classes(globals):
     with open(files('trainer').joinpath('config.yaml')) as f:

@@ -21,12 +21,14 @@ from warnings import warn
 from contextlib import nullcontext
 from datetime import datetime
 from tempfile import TemporaryDirectory
+from trainer.utils import register_class, check_class_registration
 
 class Trainer(ABC):
 
     def __init__(self, config: Dict, model: Model = None, logger: Logger = None) -> None:
         self.config = self.parse_config(config)
         self._setup(config, model, logger)
+        self._register_trainer()
     
     def fit(self, num_train_steps: int=None, trainer_state=None) -> None:
         self.num_train_steps = num_train_steps or self.config['num_train_steps']
@@ -168,6 +170,14 @@ class Trainer(ABC):
 
 
     #############################
+    
+    @property
+    def module_path(self):
+        return None
+
+    def _register_trainer(self, overwrite=False):
+        if self.module_path is not None:
+            register_class('trainer', self.__class__.__name__, self.module_path)
 
     def parse_config(self, config: Dict) -> Dict:
         return config
