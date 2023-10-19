@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(name='trainer', 
       version='1.0', 
-      packages=find_packages("src"),
+      packages=find_packages(),
     #   package_dir={"", "src"},
       include_package_data=True
       )
