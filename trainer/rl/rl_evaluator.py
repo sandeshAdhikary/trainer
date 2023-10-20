@@ -14,7 +14,6 @@ import_registered_classes(globals())
 
 if __name__ == "__main__":
 
-
     args = argparse.ArgumentParser()
     # logdir = "logdir/wandb/run-20231019_012741-fy9ilbkb/files"
     # logdir/wandb/run-20231018_230036-j4smoh3p/files/eval_checkpoint.zip
@@ -34,10 +33,10 @@ if __name__ == "__main__":
 
     # Load model
     model = trainer_info['model_class'](model_config)
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        with zipfile.ZipFile(args.eval_checkpoint, 'r') as f:
-            f.extractall(tmp_dir)
-        model.load_model(os.path.join(tmp_dir), 'state_dicts')
+    # with tempfile.TemporaryDirectory() as tmp_dir:
+    #     with zipfile.ZipFile(args.eval_checkpoint, 'r') as f:
+    #         f.extractall(tmp_dir)
+    model.load_model(model_file=args.eval_checkpoint)
 
     # Load trainer
     trainer = trainer_info['trainer_class'](trainer_config, model=model)

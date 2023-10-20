@@ -22,6 +22,7 @@ from contextlib import nullcontext
 from datetime import datetime
 from tempfile import TemporaryDirectory
 from trainer.utils import register_class, check_class_registration
+from datetime import datetime
 
 class Trainer(ABC):
 
@@ -137,6 +138,7 @@ class Trainer(ABC):
         # Save checkpoint
         if (self.save_checkpoint_freq is not None) and (self.epoch % self.save_checkpoint_freq == 0) and (self.step > 0):
             self._save_checkpoint()
+            self.logger.log(log_dict={'trainer_step': self.step, 'train/checkpoint': 1})
 
 
     def after_step(self, info=None):
@@ -276,34 +278,34 @@ class Trainer(ABC):
             trainer_state_dict = torch.load(f'{self.logger.logdir}/checkpoint/trainer_{chkpt_name}.pt')
             self.init_trainer_state(trainer_state_dict)
             # Load the model state
-            self.model.load_model(f'{self.logger.logdir}/checkpoint/model_{chkpt_name}.pt')
+            self.model.load_model(model_file=f'{self.logger.logdir}/checkpoint/model_{chkpt_name}.pt')
             if log_checkpoint:
                 # Log the checkpoint load event
                 self.num_checkpoint_loads += 1
                 self.logger.log(key='train/num_checkpoint_loads', value=self.num_checkpoint_loads, step=self.logger._sw.step)
         except (UserWarning, Exception) as e:
             warn("Could not restore checkpoint.")
+            # raise e
+            # return e
         
 
-    def _save_checkpoint(self, chkpt_name='checkpoint', chkpt_dir=None, log_checkpoint=True):
+    def _save_checkpoint(self, chkpt_name='checkpoint', chkpt_dir=None, log_checkpoint=True, **kwargs):
         """
         Zip the checkpoint folder and log it
         """
         # Set up the checkpoint directory where the zip file will be saved
         chkpt_dir = chkpt_dir or self.logger.logdir 
-        if not os.path.exists(chkpt_dir):
-            os.makedirs(chkpt_dir, exist_ok=True)
+        save_dir = os.path.join(chkpt_dir, chkpt_name)
+        os.makedirs(save_dir, exist_ok=True)
 
-        with TemporaryDirectory() as tmp_dir:            
-            # Create checkpoint files in tmp_dir
-            self._create_checkpoint_files(chkpt_name, tmp_dir)
-            # Compress tmp_dir into a zip file saved in the chkpt_dir
-            shutil.make_archive(base_name=os.path.join(chkpt_dir, chkpt_name),
-                                format='zip', 
-                                root_dir=tmp_dir)
-            if log_checkpoint:
-                # Log the checkpoint files to the logger
-                self.logger.log_checkpoint()
+        self._create_checkpoint_files(chkpt_name, save_dir, **kwargs)
+        # Compress tmp_dir into a zip file saved in the chkpt_dir
+        shutil.make_archive(base_name=save_dir,
+                            format='zip', 
+                            root_dir=save_dir)
+        if log_checkpoint:
+            # Log the checkpoint files to the logger
+            self.logger.log_checkpoint()
 
 
     def _create_checkpoint_files(self, chkpt_name='checkpoint', chkpt_dir=None):

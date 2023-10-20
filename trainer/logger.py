@@ -8,6 +8,8 @@ import zipfile
 from warnings import warn
 import trainer.utils as utils
 import shutil
+from tempfile import TemporaryDirectory
+from datetime import datetime
 
 class Logger(ABC):
     def __init__(self, config: Dict, run=None) -> None:
@@ -58,7 +60,8 @@ class Logger(ABC):
             self.run_id = self._sw.id
             self.run_name = self._sw.name
         
-        self.logdir = self._sw.dir
+        self.logdir = os.path.join(os.path.dirname(self._sw.dir), 'logdir')
+        os.makedirs(self.logdir, exist_ok=True)
     
 
     def log(self, **kwargs):
@@ -130,33 +133,30 @@ class Logger(ABC):
         if self.sw_type == 'wandb':
             restore_error = False
             try:
-                # Download checkpoint zip file
-                wandb.restore("checkpoint.zip", run_path=self._sw.path, replace=True)
-                chkpt_zip = f"{self.dir}/checkpoint.zip"
-                if os.path.exists(chkpt_zip):
-                    # Create a temp folder to extract zipped files
-                    tmp_dir = f"{self.logdir}/restored_files"
-                    os.makedirs(tmp_dir, exist_ok=True)
-                    # Extract the restored files ono tmp dir
-                    with zipfile.ZipFile(chkpt_zip, 'r') as zip_ref:
-                        zip_ref.extractall(tmp_dir)
-                    # Delete the downloaded checkpoint zip file
-                    os.remove(chkpt_zip)
-                    # Copy files from the tmp dir to the files dir   
-                    os.makedirs(f"{self.logdir}/checkpoint", exist_ok=True)
-                    for root, _, files in os.walk(tmp_dir):
-                        for file in files:
-                            # if file != 'checkpoint.zip':
-                            source_path = os.path.join(root, file)
-                            dest_path = os.path.join(f"{self.logdir}", os.path.relpath(source_path, tmp_dir))
-                            # print(dest_path)
-                            # os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                            shutil.copy2(source_path, dest_path)
-                    # Delete the tmp dir
-                    shutil.rmtree(tmp_dir)
-                else:
-                    warn("No checkpoint found!")
-                    restore_error = True
+                with TemporaryDirectory(suffix=datetime.now().strftime("%Y-%m-%d_%H-%M-%S")) as tmp_dir:            
+                    # Download checkpoint zip file
+                    wandb.restore("checkpoint.zip", run_path=self._sw.path, replace=True)
+                    chkpt_zip = f"{self.dir}/checkpoint.zip"
+                    if os.path.exists(chkpt_zip):
+                        # Extract the restored files ono tmp dir
+                        with zipfile.ZipFile(chkpt_zip, 'r') as zip_ref:
+                            zip_ref.extractall(tmp_dir)
+                        # Delete the downloaded checkpoint zip file
+                        os.remove(chkpt_zip)
+                        # Copy files from the tmp dir to the files dir   
+                        os.makedirs(f"{self.logdir}/checkpoint", exist_ok=True)
+                        for root, _, files in os.walk(tmp_dir):
+                            for file in files:
+                                source_path = os.path.join(root, file)
+                                if root == tmp_dir:
+                                    dest_path = os.path.join(f"{self.logdir}", 'checkpoint')
+                                else:
+                                    dest_path = os.path.join(f"{self.logdir}", 'checkpoint',os.path.basename(root))
+                                os.makedirs(dest_path, exist_ok=True)
+                                shutil.copy2(source_path, dest_path)
+                    else:
+                        warn("No checkpoint found!")
+                        restore_error = True
             except ValueError as e:
                 warn(e.args[0])
                 restore_error = True
