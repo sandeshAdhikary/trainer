@@ -133,6 +133,10 @@ class Trainer(ABC):
     def after_epoch(self, info=None):
         self.epoch += 1
         self.log_epoch(info)
+        
+        # Save checkpoint
+        if (self.save_checkpoint_freq is not None) and (self.epoch % self.save_checkpoint_freq == 0) and (self.step > 0):
+            self._save_checkpoint()
 
 
     def after_step(self, info=None):
@@ -143,9 +147,6 @@ class Trainer(ABC):
         # Update progress
         if self.progress is not None:
             self.progress.update(self.progress_train, completed=self.step)
-        # Save checkpoint
-        if (self.save_checkpoint_freq is not None) and (self.step % self.save_checkpoint_freq == 0) and (self.step > 0):
-            self._save_checkpoint()
 
 
     def log_step(self, info=None):
@@ -218,33 +219,34 @@ class Trainer(ABC):
             self._term_console = Console()
             self._term_layout = Layout()
             # Header: Run info panel
-            self._term_header_panel = Panel.fit(f""" Project: [orange4] {self.logger.project} [/]\
-                                    Run: [orange4] {self.logger.run_name}({self.logger.run_id})[/]""",
-                                    title='Run Info', border_style='orange4')
+            self._term_logger_panel = Panel.fit(f"""Project: [orange4] {self.logger.project} [/] \nRun: [orange4] {self.logger.run_name}({self.logger.run_id})[/]\
+                                                \nResumed: [orange4] {self.logger.resumed_run}[/] \nLogdir: [orange4] {self.logger.logdir}[/]""",
+                                    title='Logger', border_style='orange4')
+            
             # Body: Progress panel
             self.progress = Progress(
-                TextColumn("Overall Progress"),
-                BarColumn(),
+                TextColumn("Training Progress"),
+                BarColumn(complete_style="dark_sea_green4"),
                 TaskProgressColumn(),
                 TimeElapsedColumn(),
                 TimeRemainingColumn(),
                 MofNCompleteColumn(),
                 redirect_stdout=False
                 )
-            self.progress_train = self.progress.add_task("[red] Training...", total=self.num_train_steps)
+            self.progress_train = self.progress.add_task("[dark_sea_green4] Training...", total=self.num_train_steps)
 
             if config.get('terminal_display') == 'rich_minimal':
                 # Only a progress bar
                 self.terminal_display = self.progress
             else:
                 # Full terminal display
-                self._term_progress_panel = Panel.fit(Columns([self.progress]), title="Progress", border_style="dark_sea_green4")
+                self._term_progress_panel = Panel.fit(Columns([self.progress]), title="Training", border_style="dark_sea_green4")
                 # Footer: Misc info
                 self._term_footer_text = f"""[bold]Device[/]: {self.device}"""
-                self._term_footer_panel = Panel(self._term_footer_text, title="Misc", border_style='red')
+                self._term_footer_panel = Panel(self._term_footer_text, title="Info", border_style='misty_rose1')
                 # Add panels to layout
                 self._term_layout.split(
-                    Layout(self._term_header_panel, size=3, name="header"),
+                    Layout(self._term_logger_panel, size=6, name="logger"),
                     Layout(self._term_progress_panel, size=5, name="progress"),
                     Layout(self._term_footer_panel, size=3, name="footer"),
                 )
@@ -267,6 +269,8 @@ class Trainer(ABC):
     def _load_checkpoint(self, chkpt_name='checkpoint', log_checkpoint=True):
         # Download checkpoint from logger
         try:
+            if not os.path.exists(f'{self.logger.logdir}/checkpoint'):
+                os.makedirs(f'{self.logger.logdir}/checkpoint', exist_ok=True)
             self.logger.restore_checkpoint()
             # Load the trainer state
             trainer_state_dict = torch.load(f'{self.logger.logdir}/checkpoint/trainer_{chkpt_name}.pt')

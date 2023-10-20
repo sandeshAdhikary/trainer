@@ -11,6 +11,11 @@ import pickle
 import subprocess
 import shutil
 import re
+from rich.panel import Panel
+from rich.columns import Columns
+from rich.layout import Layout
+from rich.live import Live
+from rich.progress import Progress, BarColumn, TextColumn, TaskProgressColumn, TimeElapsedColumn, TimeRemainingColumn, MofNCompleteColumn
 
 class RLTrainer(Trainer, ABC):
 
@@ -35,9 +40,29 @@ class RLTrainer(Trainer, ABC):
     def _setup_terminal_display(self, config: Dict) -> None:
         super()._setup_terminal_display(config)
         if self.progress is not None:
+
             # Add evaluation progress bar
-            self.progress_eval = self.progress.add_task("[green] Evaluating...", 
-                                                        total=self.eval_env.max_episode_steps * self.num_eval_episodes)
+            self.eval_progress_bar = Progress(
+                TextColumn("Evaluation Progress"),
+                BarColumn(complete_style="steel_blue3"),
+                TaskProgressColumn(),
+                MofNCompleteColumn(),
+                redirect_stdout=False
+                )
+            self.progress_eval = self.eval_progress_bar.add_task("[steel_blue3] Evaluating...", 
+                                                             total=self.eval_env.max_episode_steps * self.num_eval_episodes)
+            
+            orig_panels = self._term_layout.children
+            self._term_eval_panel = Panel.fit(Columns([self.eval_progress_bar]), title="Evaluation", border_style="steel_blue3")
+            self._term_layout = Layout()
+            self._term_layout.split(
+                *orig_panels,
+                Layout(self._term_eval_panel, size=5, name="evaluation"),
+            )
+            self.terminal_display = Live(self._term_layout, 
+                                        screen=False, 
+                                        refresh_per_second=config.get('terminal_refresh_rate', 1))
+
 
     @abstractmethod
     def env_fns(self, config):
@@ -114,7 +139,7 @@ class RLTrainer(Trainer, ABC):
                                         step = f.readlines()[-1].strip("step:")
                                         step = float(re.sub(r'[\t\n]', '', step))
                                         if hasattr(self, 'progress_eval'):
-                                            self.progress.update(self.progress_eval, completed=step)
+                                            self.eval_progress_bar.update(self.progress_eval, completed=step)
                                     except IndexError:
                                         pass 
                             eval_job_status = self.eval_job.poll()
@@ -154,7 +179,7 @@ class RLTrainer(Trainer, ABC):
                 # Launch asynchronous processs to evaluate the model
                 self.eval_output_file = os.path.join(eval_chkpt_dir, 'eval_out')
                 self.eval_log_file = os.path.join(eval_chkpt_dir, 'eval_log')
-                command = f"""python -m trainer.rl_evaluator \
+                command = f"""python -m trainer.rl.rl_evaluator \
                     --trainer_info {os.path.join(eval_chkpt_dir, 'eval_trainer_info.pkl')} \
                     --eval_checkpoint {os.path.join(eval_chkpt_dir, 'state_dicts.zip')} \
                     --eval_log_file {self.eval_log_file} \
@@ -174,7 +199,7 @@ class RLTrainer(Trainer, ABC):
                 if hasattr(self, 'eval_log'):
                     self.eval_log.append({'step': self.step, 'log': eval_step_output})
                 if hasattr(self, 'progress_eval'):
-                    self.progress.update(self.progress_eval, completed=0)
+                    self.eval_progress_bar.update(self.progress_eval, completed=0)
 
     def evaluate_nonvec(self, max_ep_steps=None, eval_log_file=None):
         """
@@ -215,7 +240,7 @@ class RLTrainer(Trainer, ABC):
                     f.write(f"step:{i}\n")
 
             if hasattr(self, 'progress_eval'):
-                self.progress.update(self.progress_eval, completed=i)
+                self.eval_progress_bar.update(self.progress_eval, completed=i)
 
             # No  need to reset again since vec_env resets individual envs automatically
             if None not in steps_to_keep:
@@ -322,6 +347,10 @@ class RLTrainer(Trainer, ABC):
                         # Clear current episode reward tracker if done
                         self.current_episode_reward[idx] = 0
 
+        # Save checkpoint
+        if (self.save_checkpoint_freq is not None) and (self.epoch % self.save_checkpoint_freq == 0) and (self.step > 0):
+            self._save_checkpoint()
+
 
         self.log_epoch(epoch_info)
             # Call training callback
@@ -351,7 +380,7 @@ class RLTrainer(Trainer, ABC):
                     step = f.readlines()[-1].strip("step:")
                     step = float(re.sub(r'[\t\n]', '', step))
                 if hasattr(self, 'progress_eval'):
-                    self.progress.update(self.progress_eval, completed=step)
+                    self.eval_progress_bar.update(self.progress_eval, completed=step)
 
         # Log eval metrics
         if len(self.eval_log) > 0:

@@ -10,7 +10,12 @@ import trainer.utils as utils
 import shutil
 
 class Logger(ABC):
-    def __init__(self, config: Dict) -> None:
+    def __init__(self, config: Dict, run=None) -> None:
+        """
+        config: dictionary defining the logger
+        run: (Optional) a pre-initialized run object (e.g. wandb.run)
+        """
+
         config = self.parse_config(config)
         self.project = config.get('project', 'misc')
         self.dir =  os.path.abspath(config.get('dir', './logdir'))
@@ -32,7 +37,7 @@ class Logger(ABC):
             tags = config.get('tags', None)
             if tags and not isinstance(tags, list):
                 tags = list(tags)
-            if wandb.run is None:
+            if run is None:
                 # Initialize a new summary-writer / wandb-run
                 wandb_api = config.get('wandb_api')
                 if wandb_api is None:
@@ -42,11 +47,13 @@ class Logger(ABC):
                 wandb.login()
                 project = config.get('project', self.project)
                 self._sw = wandb.init(project=project, dir=self.dir, config=tracked_params, tags=tags)
+                self.resumed_run = False
             else:
                 # The summary-writer/wandb-run has already been initialized
-                self._sw = wandb.run
-                project = wandb.run.project
-                self.dir = wandb.run.dir
+                self._sw = run
+                project = run.project
+                self.dir = run.dir
+                self.resumed_run = True
             
             self.run_id = self._sw.id
             self.run_name = self._sw.name
