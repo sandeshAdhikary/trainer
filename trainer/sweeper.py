@@ -111,10 +111,13 @@ class WandBSweeper():
         """
         Sets up a wandb.sweep() and calls wandb.agent()
         """
+
         assert self.default_params is not None, "Default params not set. Run set_default_params() first."
         
         if self.sweep_exists():
             print(f"Loading sweep {self.sweep_name} from project {self.project}")
+            print(f"Waiting for heartbeat timeout for {self.heartbeat_timeout} seconds...")
+            sleep(self.heartbeat_timeout)
             self.sweep_id = self.project_sweeps_dict()[self.sweep_name]['id']
             if self.config['load_runs_from_queue']:
                 self.run_from_queue()                    
@@ -162,13 +165,17 @@ class WandBSweeper():
         trainer.fit()
 
     def project_sweeps_dict(self):
-        api = wandb.Api()
-        project_sweeps = api.project(self.project).sweeps()
-        if len(project_sweeps) > 0:
-            project_sweeps = {x.name: {'id': x.id} for x in project_sweeps}
-        else:
-            project_sweeps = {}
-        return project_sweeps
+        project = wandb.Api().project(self.project)
+        try:
+            project_sweeps = project.sweeps()
+            # wandb.errors.CommError
+            if len(project_sweeps) > 0:
+                project_sweeps = {x.name: {'id': x.id} for x in project_sweeps}
+            else:
+                project_sweeps = {}
+            return project_sweeps
+        except wandb.errors.CommError:
+            return {}
 
 
     def sweep_exists(self):

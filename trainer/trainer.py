@@ -109,6 +109,7 @@ class Trainer(ABC):
         if self.progress is not None:
             # Initialize progress
             self.progress.update(self.progress_train, completed=self.step)
+        self.logger.start()
         # Set model to train mode
         self.model.train()
 
@@ -294,19 +295,30 @@ class Trainer(ABC):
         # Set up the checkpoint directory where the zip file will be saved
         chkpt_dir = chkpt_dir or self.logger.logdir 
         save_dir = os.path.join(chkpt_dir, chkpt_name)
-        os.makedirs(save_dir, exist_ok=True)
+
+        if kwargs.get('overwrite'):
+            # Delete the old save_dir and replace with new one
+            if os.path.exists(save_dir):
+                shutil.rmtree(save_dir)
+            os.makedirs(save_dir, exist_ok=False)
+        else:
+            os.makedirs(save_dir, exist_ok=True)
 
         self._create_checkpoint_files(chkpt_name, save_dir, **kwargs)
-        # Compress tmp_dir into a zip file saved in the chkpt_dir
-        shutil.make_archive(base_name=save_dir,
-                            format='zip', 
-                            root_dir=save_dir)
         if log_checkpoint:
+            # Compress tmp_dir into a zip file saved in the chkpt_dir
+            shutil.make_archive(base_name=save_dir,
+                                format='zip', 
+                                root_dir=save_dir)
+
             # Log the checkpoint files to the logger
             self.logger.log_checkpoint()
+            
+            # # Delete the archive
+            # os.remove(f"{save_dir}.zip")
 
 
-    def _create_checkpoint_files(self, chkpt_name='checkpoint', chkpt_dir=None):
+    def _create_checkpoint_files(self, chkpt_name='checkpoint', chkpt_dir=None, save_optimizers=True):
         """
         Custom Trainer class can add other checkpoint files here.
         The checkpoint files should have format {name}_chkpt.pt
@@ -327,7 +339,7 @@ class Trainer(ABC):
                         }
         torch.save(trainer_state, os.path.join(chkpt_dir, f'trainer_{chkpt_name}.pt'))
         # Save model state
-        self.model.save_model(os.path.join(chkpt_dir, f'model_{chkpt_name}.pt'))
+        self.model.save_model(os.path.join(chkpt_dir, f'model_{chkpt_name}.pt'), save_optimizers=save_optimizers)
 
 
 

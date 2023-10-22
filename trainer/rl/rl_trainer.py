@@ -135,7 +135,7 @@ class RLTrainer(Trainer, ABC):
                 
         self.after_train() 
 
-    def _create_checkpoint_files(self, chkpt_name='checkpoint', chkpt_dir=None, save_buffer=True):
+    def _create_checkpoint_files(self, chkpt_name='checkpoint', chkpt_dir=None, save_optimizers=True, save_buffer=True, **kwargs):
         """
         """
         # Create a (temporary) checkpoint directory
@@ -161,7 +161,7 @@ class RLTrainer(Trainer, ABC):
 
         torch.save(trainer_state, os.path.join(chkpt_dir, f'trainer_{chkpt_name}.pt'))
         # Save model state
-        self.model.save_model(os.path.join(chkpt_dir, f'model_{chkpt_name}.pt'))
+        self.model.save_model(os.path.join(chkpt_dir, f'model_{chkpt_name}.pt'), save_optimizers=save_optimizers)
         
         # Save replay buffer 
         if save_buffer:
@@ -395,11 +395,24 @@ class RLTrainer(Trainer, ABC):
         # Save checkpoint
         if (self.save_checkpoint_freq is not None) and (self.epoch % self.save_checkpoint_freq == 0) and (self.step > 0):
             self._save_checkpoint()
+            os.path.exists('/project/logdir/wandb/run-20231022_181630-q8ey8o5h/files/checkpoint.zip')
+
             self.num_checkpoint_saves += 1
             self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint/num_checkpoint_saves': self.num_checkpoint_saves})
 
 
         self.log_epoch(epoch_info)
+
+    def after_train(self, info=None):
+        """
+        Callbacks after training ends
+        """
+        self.log_train(info)
+        # Replace existing checkpoint with final checkpoint (without buffer and optimizers)
+        self._save_checkpoint(chkpt_name='checkpoint', 
+                              log_checkpoint=True, save_buffer=False, save_optimizers=False,
+                              overwrite=True)
+        self.logger.finish()
 
 
     def _load_checkpoint(self, chkpt_name='checkpoint', log_checkpoint=True):
@@ -410,7 +423,7 @@ class RLTrainer(Trainer, ABC):
             try:
                 self.replay_buffer.load(f'{self.logger.logdir}/checkpoint/replay_buffer')
             except (UserWarning, Exception) as e:
-                warn("Could not restore checkpoint.")
+                warn("Could not restore replay buffer.")
 
 
     def log_step(self, info=None):

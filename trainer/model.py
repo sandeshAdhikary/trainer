@@ -25,7 +25,7 @@ class Model(ABC):
     def evaluation_step(self):
         raise NotImplementedError
 
-    def save_model(self, filename):
+    def save_model(self, filename, save_optimizers=True):
         """
         Save model 
         """

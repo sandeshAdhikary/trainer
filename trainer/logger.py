@@ -113,7 +113,7 @@ class Logger(ABC):
     def log_video(self, key, frames, step, image_mode='hwc'):
         self._try_sw_log_video(key, frames, step, image_mode)
 
-    def finish(self, info: Dict):
+    def finish(self, info: Dict = None):
         self._try_sw_finish(info)
 
     ########################################
@@ -128,6 +128,9 @@ class Logger(ABC):
                 run.tags.remove('InProgress')
             run.tags.append('Complete')
             run.update()
+
+            # Replace checkpoint.zip with final checkpoint
+
 
             wandb.finish()
             command = f'wandb sync {self.logdir} --id {self.run_id} -p {self.project}'
@@ -168,7 +171,8 @@ class Logger(ABC):
             try:
                 with TemporaryDirectory(suffix=datetime.now().strftime("%Y-%m-%d_%H-%M-%S")) as tmp_dir:            
                     # Download checkpoint zip file
-                    wandb.restore("checkpoint.zip", run_path=self._sw.path, replace=True)
+                    wandb.restore("checkpoint.zip", replace=True)
+                    # wandb.restore("checkpoint.zip", run_path=self._sw.path, replace=True)
                     chkpt_zip = f"{self.dir}/checkpoint.zip"
                     if os.path.exists(chkpt_zip):
                         # Extract the restored files ono tmp dir
