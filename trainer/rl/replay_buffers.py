@@ -122,3 +122,4 @@ class ReplayBuffer(object):
             if self.infos is not None:
                 self.infos[start:end] = payload[6]
             self.idx = end
+            self.last_save = end
