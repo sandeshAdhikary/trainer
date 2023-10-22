@@ -101,6 +101,7 @@ class WandBSweeper():
                 # Execute first run in the queue
                 self.objective(run_queue[0])
                 # Allow enough time so run can be picked up
+                print(f"Waiting for heartbeat timeout for {self.heartbeat_timeout} seconds...")
                 sleep(self.heartbeat_timeout)
             else:
                 # No runs in the queue
