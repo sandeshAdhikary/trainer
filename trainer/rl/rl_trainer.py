@@ -174,9 +174,8 @@ class RLTrainer(Trainer, ABC):
 
     def evaluate(self, max_ep_steps=None, training_mode=False, async_eval=False, eval_log_file=None, eval_output_file=None):
         """"
-        If async: launch a separate process. It's outputs are pickled and loaded+logged later
-                  If evaluate() is called before last async-eval process has ended, 
-                  wait until last eval ends before starting new process
+        Evaluation outputs are written onto a global dict
+        to allow for asynchronous evaluation
         """
     
         run_eval = True
@@ -424,7 +423,7 @@ class RLTrainer(Trainer, ABC):
             try:
                 self.replay_buffer.load(f'{self.logger.logdir}/checkpoint/replay_buffer')
             except (UserWarning, Exception) as e:
-                warn("Could not restore replay buffer.")
+                warn(f"Could not restore replay buffer. Error: {e}")
 
 
     def log_step(self, info=None):
