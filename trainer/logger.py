@@ -1,5 +1,5 @@
-from abc import ABC, abstractmethod
-from typing import Dict, Union
+from abc import ABC
+from typing import Dict
 from einops import rearrange
 import wandb
 import os
@@ -10,6 +10,7 @@ import trainer.utils as utils
 import shutil
 from tempfile import TemporaryDirectory
 from datetime import datetime
+import subprocess
 
 class Logger(ABC):
     def __init__(self, config: Dict, run=None) -> None:
@@ -18,7 +19,7 @@ class Logger(ABC):
         run: (Optional) a pre-initialized run object (e.g. wandb.run)
         """
 
-        config = self.parse_config(config)
+        self.config = self.parse_config(config)
         self.project = config.get('project', 'misc')
         self.dir =  os.path.abspath(config.get('dir', './logdir'))
         self.video_log_freq = config['video_log_freq']
@@ -55,7 +56,7 @@ class Logger(ABC):
                 self._sw = run
                 project = run.project
                 self.dir = run.dir
-                self.resumed_run = True
+                self.resumed_run = run.resumed
             
             self.run_id = self._sw.id
             self.run_name = self._sw.name
@@ -63,7 +64,6 @@ class Logger(ABC):
         self.logdir = os.path.join(os.path.dirname(self._sw.dir), 'logdir')
         os.makedirs(self.logdir, exist_ok=True)
     
-
     def log(self, **kwargs):
         log_dict = kwargs.get('log_dict')
         if log_dict is not None:
@@ -83,9 +83,15 @@ class Logger(ABC):
         """
         return self._try_sw_restore_checkpoint()
     
-    def finish(self):
+    def start(self):
         if self.sw_type == 'wandb':
-            self._sw.finish()
+            # Tag the run as in progress
+            run = wandb.Api().run(f"{self.project}/{self.run_id}")
+            run.tags.append('InProgress')
+            run.update()
+        else:
+            raise NotImplementedError("Only wandb is supported for now")
+
 
     def parse_config(self, config):
         if isinstance(config.get('tags'), str):
@@ -107,9 +113,36 @@ class Logger(ABC):
     def log_video(self, key, frames, step, image_mode='hwc'):
         self._try_sw_log_video(key, frames, step, image_mode)
 
+    def finish(self, info: Dict):
+        self._try_sw_finish(info)
+
     ########################################
     # Summary writer specific functions ####
     ########################################
+
+    def _try_sw_finish(self, info):
+        if self.sw_type == 'wandb':
+            # Tag the run as completed
+            run = wandb.Api().run(f"{self.project}/{self.run_id}")
+            if (run.tags is not None) and ('InProgress' in run.tags):
+                run.tags.remove('InProgress')
+            run.tags.append('Complete')
+            run.update()
+
+            wandb.finish()
+            command = f'wandb sync {self.logdir} --id {self.run_id} -p {self.project}'
+            sync_process = subprocess.Popen(
+                command,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True  # Enable text mode (for string output)
+            )
+            sync_process.wait()
+            if self.config['cleanup'] and sync_process.poll() == 0:
+                    shutil.rmtree(os.path.dirname(self.logdir))
+        else:
+            raise NotImplementedError("Only wandb is supported for now")
 
     def _try_sw_log(self, **kwargs):
         log_dict = kwargs.get('log_dict')
@@ -119,7 +152,7 @@ class Logger(ABC):
             else:
                 self._sw.log({kwargs['key']: kwargs['value']}, step=kwargs['step'])
         else:
-            raise ValueError("Invalid summary writer type: %s" % self.sw_type)
+            raise NotImplementedError("Only wandb is supported for now")
 
 
     def _try_sw_log_checkpoint(self):

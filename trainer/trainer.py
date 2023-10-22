@@ -6,8 +6,6 @@ import trainer.utils as utils
 import os
 from trainer.logger import Logger
 import multiprocessing as mp
-import numpy as np
-import rich
 from rich.layout import Layout
 from rich.console import Console
 from rich.panel import Panel
@@ -19,10 +17,7 @@ from collections import deque
 import shutil
 from warnings import warn
 from contextlib import nullcontext
-from datetime import datetime
-from tempfile import TemporaryDirectory
-from trainer.utils import register_class, check_class_registration
-from datetime import datetime
+from trainer.utils import register_class
 
 class Trainer(ABC):
 
@@ -130,6 +125,7 @@ class Trainer(ABC):
         # Close logger
         # Close any open connections
         self.log_train(info)
+        self.logger.finish()
 
     def after_epoch(self, info=None):
         self.epoch += 1
@@ -138,7 +134,8 @@ class Trainer(ABC):
         # Save checkpoint
         if (self.save_checkpoint_freq is not None) and (self.epoch % self.save_checkpoint_freq == 0) and (self.step > 0):
             self._save_checkpoint()
-            self.logger.log(log_dict={'trainer_step': self.step, 'train/checkpoint': 1})
+            self.num_checkpoint_saves += 1
+            self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint/num_checkpoint_saves': self.num_checkpoint_saves})
 
 
     def after_step(self, info=None):
@@ -194,6 +191,7 @@ class Trainer(ABC):
         self.eval_log = state_dict.get('eval_log', deque(maxlen=self.log_length_eval))
         self.train_end = state_dict.get('train_end', False)
         self.num_checkpoint_loads = state_dict.get('num_checkpoint_loads', 0)
+        self.num_checkpoint_saves = state_dict.get('num_checkpoint_saves', 0)
 
     def _setup(self, config: Dict = None, model: Model = None, logger: Logger =None) -> None:
 
@@ -208,7 +206,7 @@ class Trainer(ABC):
         self.async_eval = config.get('async_eval', False)
         self.log_length_train = config.get('log_length_train', 100)
         self.log_length_eval = config.get('log_length_eval', 100)
-        
+
         self.model = model     
         self.logger = logger
         self._set_seeds(config)
@@ -282,7 +280,7 @@ class Trainer(ABC):
             if log_checkpoint:
                 # Log the checkpoint load event
                 self.num_checkpoint_loads += 1
-                self.logger.log(key='train/num_checkpoint_loads', value=self.num_checkpoint_loads, step=self.logger._sw.step)
+                self.logger.log(key='checkpoint/num_checkpoint_loads', value=self.num_checkpoint_loads, step=self.logger._sw.step)
         except (UserWarning, Exception) as e:
             warn("Could not restore checkpoint.")
             # raise e

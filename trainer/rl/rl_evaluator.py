@@ -1,11 +1,5 @@
-import numpy as np
-import os
-import tempfile
-import importlib
-import yaml
 import argparse
 import pickle
-import zipfile
 from warnings import warn
 # Load all registered models and trainers
 # This is needed to load model/trainer classes from pickles
@@ -15,11 +9,8 @@ import_registered_classes(globals())
 if __name__ == "__main__":
 
     args = argparse.ArgumentParser()
-    # logdir = "logdir/wandb/run-20231019_012741-fy9ilbkb/files"
-    # logdir/wandb/run-20231018_230036-j4smoh3p/files/eval_checkpoint.zip
     args.add_argument("--trainer_info", type=str, required=True)
     args.add_argument("--eval_checkpoint", type=str, required=True)
-    # args.add_argument("--num_eval_episodes", type=int, default=10)
     args.add_argument("--eval_log_file", type=str, default=None)
     args.add_argument("--eval_output_file", type=str, default=None)
     args.add_argument("--step", type=int, default=None)
@@ -33,9 +24,6 @@ if __name__ == "__main__":
 
     # Load model
     model = trainer_info['model_class'](model_config)
-    # with tempfile.TemporaryDirectory() as tmp_dir:
-    #     with zipfile.ZipFile(args.eval_checkpoint, 'r') as f:
-    #         f.extractall(tmp_dir)
     model.load_model(model_file=args.eval_checkpoint)
 
     # Load trainer

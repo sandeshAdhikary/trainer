@@ -6,22 +6,24 @@ from trainer.rl.replay_buffers import ReplayBuffer
 import numpy as np
 from einops import rearrange
 import os
-import multiprocessing as mp
 import pickle
 import subprocess
-import shutil
 import re
+import torch
 from rich.panel import Panel
 from rich.columns import Columns
 from rich.layout import Layout
 from rich.live import Live
 from rich.progress import Progress, BarColumn, TextColumn, TaskProgressColumn, TimeElapsedColumn, TimeRemainingColumn, MofNCompleteColumn
+from warnings import warn
+from copy import deepcopy
+from functools import partial
 
 class RLTrainer(Trainer, ABC):
 
     def setup_data(self, config: Dict):
         # Setup the environment
-        self._setup_env(config['env'])
+        self._setup_env(config['env'], config['eval_env'])
 
         # Setup the replay buffer
         env_shapes = self.env.get_env_shapes()
@@ -65,17 +67,51 @@ class RLTrainer(Trainer, ABC):
 
 
     @abstractmethod
+    def make_env(self, args):
+        raise NotImplementedError
+
     def env_fns(self, config):
         """
         config: config dict defining the envs
         return: env_fn, eval_env_fn i.e. env generating functions that can be executed as env_fn()
         """
-        raise NotImplementedError
+        if config['num_envs'] > 1:
+            env_fns = [partial(self.make_env, config) for _ in range(config['num_envs'])]
+        else:
+            env_fns = partial(self.make_env, config)
+        
+        return env_fns
 
-    def _setup_env(self, env_config):
-        env_fn, eval_env_fn = self.env_fns(env_config)
-        self.env = TrainerEnv(env_fn)
-        self.eval_env = TrainerEnv(eval_env_fn)
+    def _setup_env(self, env_config, eval_env_config_input=None):
+        # Set up env function
+        env_fns = self.env_fns(env_config)
+
+        # Set up eval env function
+        if eval_env_config_input is None:
+            eval_env_config = deepcopy(env_config)
+            # Create another copy of the training env with a different seed
+            eval_env_config.update({'seed': env_config['seed'] + 1})
+            eval_env_fns = self.env_fns(eval_env_config)
+        else:
+            num_envs = eval_env_config_input.get('num_envs', 1)
+            if num_envs < 2:
+                # Create eval_env config and make an env function (with different seed)
+                eval_env_config = deepcopy(env_config)
+                eval_env_config.update(eval_env_config_input)
+                eval_env_config.update({'seed': env_config['seed'] + 1})
+                eval_env_fns = self.env_fns(eval_env_config)
+            else:
+                # Create multiple eval_env_configs, each with different seed
+                eval_env_fns = []
+                for idx in range(num_envs):
+                    eval_env_config = deepcopy(env_config)
+                    eval_env_config.update(eval_env_config_input)
+                    eval_env_config.update({'seed': env_config['seed'] + idx, 
+                                            'num_envs': 1})
+                    eval_env_fns.append(self.env_fns(eval_env_config))
+
+        self.env = TrainerEnv(env_fns)
+        self.eval_env = TrainerEnv(eval_env_fns)
 
     def fit(self, num_train_steps: int=None, trainer_state=None) -> None:
         self.num_train_steps = num_train_steps or self.config['num_train_steps']
@@ -88,25 +124,51 @@ class RLTrainer(Trainer, ABC):
                 rollout_data = self.collect_rollouts(self.obs, add_to_buffer=True)
                 # Update the agent
                 num_updates = self.get_num_updates()
-                if num_updates > 0:
-                    for batch_idx in range(num_updates):
-                        self.before_step()
-                        batch = self.replay_buffer.sample()
-                        self.train_step(batch, batch_idx)
-                        self.after_step()
-                else:
-                    # update trainer state
-                    self.after_step()
+                for batch_idx in range(num_updates):
+                    self.before_step()
+                    batch = self.replay_buffer.sample()
+                    self.train_step(batch, batch_idx)
+
+                self.after_step()
                 self.evaluate(training_mode=True, async_eval=self.async_eval)
-                self.after_epoch({'rollout': rollout_data, 'num_updates': num_updates})
+                self.after_epoch({'rollout': rollout_data, 'num_model_updates': num_updates})
                 
         self.after_train() 
 
-    def _create_checkpoint_files(self, chkpt_name='checkpoint', chkpt_dir=None, save_buffer=False):
-        super()._create_checkpoint_files(chkpt_name, chkpt_dir)
+    def _create_checkpoint_files(self, chkpt_name='checkpoint', chkpt_dir=None, save_buffer=True):
+        """
+        """
+        # Create a (temporary) checkpoint directory
+        chkpt_dir = chkpt_dir or os.path.join(self.logger.logdir, chkpt_name)
+
+        # Save trainer state
+        trainer_state = {'step': self.step,
+                         'epoch': self.epoch,
+                         'train_log': self.train_log, 
+                         'eval_log': self.eval_log,
+                         'train_end': self.train_end,
+                         'num_checkpoint_loads': self.num_checkpoint_loads,
+                         'obs': self.obs,
+                         'done': self.done,
+                         'reward': self.reward,
+                         'num_episodes': self.num_episodes,
+                         'episode': self.episode,
+                         'current_episode_reward': self.current_episode_reward,
+                         'episode_reward_list': self.episode_reward_list,
+                         'num_model_updates': self.num_model_updates,
+                         'epoch': self.epoch
+                        }
+
+        torch.save(trainer_state, os.path.join(chkpt_dir, f'trainer_{chkpt_name}.pt'))
+        # Save model state
+        self.model.save_model(os.path.join(chkpt_dir, f'model_{chkpt_name}.pt'))
+        
         # Save replay buffer 
         if save_buffer:
-            pass
+            # Create buffer to store replay buffer files
+            buffer_save_folder = os.path.join(chkpt_dir, 'replay_buffer')
+            os.makedirs(buffer_save_folder, exist_ok=True)
+            self.replay_buffer.save(buffer_save_folder)
                                                 
 
 
@@ -165,10 +227,10 @@ class RLTrainer(Trainer, ABC):
                     
                 # Create a dir to save eval_checkpoints
                 eval_chkpt_dir = os.path.join(self.logger.logdir, 'eval_checkpoint')
-                os.makedirs(eval_chkpt_dir, exist_ok=True)
+                # os.makedirs(eval_chkpt_dir, exist_ok=True)
                 
                 # Save state dicts
-                self._save_checkpoint(chkpt_name='state_dicts', chkpt_dir=eval_chkpt_dir, log_checkpoint=False)
+                self._save_checkpoint(chkpt_name='eval_checkpoint', log_checkpoint=False, save_buffer=False)
                 # Save trainer and model info so we can import them again
                 trainer_info = {'trainer_class': self.__class__, 
                                 'model_class': self.model.__class__,
@@ -181,7 +243,7 @@ class RLTrainer(Trainer, ABC):
                 self.eval_log_file = os.path.join(eval_chkpt_dir, 'eval_log')
                 command = f"""python -m trainer.rl.rl_evaluator \
                     --trainer_info {os.path.join(eval_chkpt_dir, 'eval_trainer_info.pkl')} \
-                    --eval_checkpoint {os.path.join(eval_chkpt_dir, 'state_dicts.zip')} \
+                    --eval_checkpoint {os.path.join(eval_chkpt_dir, 'model_eval_checkpoint.pt')} \
                     --eval_log_file {self.eval_log_file} \
                     --eval_output_file {self.eval_output_file} \
                     --step {self.step}
@@ -264,14 +326,9 @@ class RLTrainer(Trainer, ABC):
 
                 if num_eps[ide] >= self.num_eval_episodes:
                     steps_to_keep[ide] = steps
-            # if (self.eval_calls % self.log_video_freq == 0) or self.training_done:
-            #     video.record(env)
+
             episode_reward_list.append(reward)
 
-        # if (self.eval_calls % self.log_video_freq == 0) or self.training_done:
-        #     video.save('%d.mp4' % step)
-        #     if len(video.frames) > 0:
-        #         L.log_video('eval/video', video.frames, step)
         episode_reward_list = np.array(episode_reward_list)
 
         max_steps = episode_reward_list.shape[0]
@@ -283,23 +340,11 @@ class RLTrainer(Trainer, ABC):
         obses = np.stack(obses) # (steps, num_envs, *obs_shape)
         # Stack frames horizontally; Stack episodes along batches
         obses = rearrange(obses, 'b n (f c) h w -> b c (n h) (f w)', f=len(num_frames)) 
-        # if (self.epoch % self.logger.video_log_freq == 0) or self.train_end:
-        #     eval_info['obs_video'] = obses
 
-            # self.logger.log_video(key='eval/obs_video', frames=obses, image_mode='chw', step=self.step)
+        # Get average episode rewards across all environments
+        eval_info['episode_rewards_avg'] = episode_reward_list.sum(axis=0).mean()
+        eval_info['episode_rewards_std'] = episode_reward_list.sum(axis=0).std()
 
-
-        # Get average episode reward for each environment
-        avg_env_episode_rewards = np.sum(episode_reward_list, axis=0)/self.num_eval_episodes
-        eval_info['avg_env_episode_rewards'] = avg_env_episode_rewards
-        # Log performance for each environment
-        # self.log_performance(avg_env_episode_rewards, L, step)
-
-
-        # eval_episode_reward is the episode reward only from the first env
-        # since first env has the same config as the training env
-        eval_episode_reward = avg_env_episode_rewards[0]
-        eval_info['episode_reward'] = eval_episode_reward
 
         # L.log('eval/episode_reward', eval_episode_reward, step)
         if eval_output_file is not None:
@@ -320,7 +365,7 @@ class RLTrainer(Trainer, ABC):
         self.done = rollout_data['terminated'] | rollout_data['truncated']
         self.step += rollout_data['num_steps']
         self.epoch += 1
-        self.num_model_updates += epoch_info['num_updates']
+        self.num_model_updates += epoch_info['num_model_updates']
         self.current_episode_reward += self.reward
         
         if not self.env.is_vec_env:
@@ -350,11 +395,23 @@ class RLTrainer(Trainer, ABC):
         # Save checkpoint
         if (self.save_checkpoint_freq is not None) and (self.epoch % self.save_checkpoint_freq == 0) and (self.step > 0):
             self._save_checkpoint()
+            self.num_checkpoint_saves += 1
+            self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint/num_checkpoint_saves': self.num_checkpoint_saves})
 
 
         self.log_epoch(epoch_info)
-            # Call training callback
-            # TODO: Add training callback
+
+
+    def _load_checkpoint(self, chkpt_name='checkpoint', log_checkpoint=True):
+        # Restore model and trainer state to the checkpoint
+        load_exception = super()._load_checkpoint(chkpt_name=chkpt_name, log_checkpoint=log_checkpoint)
+        # Restore the replay buffer
+        if load_exception is None:
+            try:
+                self.replay_buffer.load(f'{self.logger.logdir}/checkpoint/replay_buffer')
+            except (UserWarning, Exception) as e:
+                warn("Could not restore checkpoint.")
+
 
     def log_step(self, info=None):
         pass
@@ -386,7 +443,9 @@ class RLTrainer(Trainer, ABC):
         if len(self.eval_log) > 0:
             last_item = self.eval_log[-1]
             self.logger.log(log_dict={'eval_step': int(last_item['step']),
-                                        'eval/episode_reward': float(last_item['log']['episode_reward'])})
+                                      'eval/episode_reward_avg': float(last_item['log']['episode_rewards_avg']),
+                                      'eval/episode_reward_std': float(last_item['log']['episode_rewards_std'])}
+                                      )
 
     def log_train(self, info=None):
         pass
@@ -431,16 +490,18 @@ class RLTrainer(Trainer, ABC):
         return 0
 
     def init_trainer_state(self, state_dict=None):
+        state_dict = state_dict or {}
         # Initialize/update step, train/eval logs, etc.
         super().init_trainer_state(state_dict)
         # Update RL specific params
-        self.obs, _ = self.env.reset()
-        self.done = [False]*self.env.num_envs
-        self.reward = [0]*self.env.num_envs
+        self.obs = state_dict.get('obs', self.env.reset()[0])
+        self.done = state_dict.get('done', [False]*self.env.num_envs)
+        self.reward = state_dict.get('reward', [0]*self.env.num_envs)
         # Set up counters
-        self.num_episodes = np.zeros(self.env.num_envs)
-        self.episode = np.zeros(self.env.num_envs)
-        self.current_episode_reward = np.zeros(self.env.num_envs)
-        self.episode_reward_list = [[] for _ in range(self.env.num_envs)]
-        self.num_model_updates = 0
+        self.num_episodes = state_dict.get('num_episodes', np.zeros(self.env.num_envs))
+        self.episode = state_dict.get('episode', np.zeros(self.env.num_envs))
+        self.current_episode_reward = state_dict.get('current_episode_reward', np.zeros(self.env.num_envs))
+        self.episode_reward_list = state_dict.get('episode_reward_list', [[] for _ in range(self.env.num_envs)])
+        self.num_model_updates = state_dict.get('num_model_updates', 0)
+
 
