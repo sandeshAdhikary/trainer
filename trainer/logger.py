@@ -17,6 +17,7 @@ class Logger(ABC):
         """
         config: dictionary defining the logger
         run: (Optional) a pre-initialized run object (e.g. wandb.run)
+        Note: This class was designed based on logger in https://github.com/facebookresearch/deep_bisim4control
         """
 
         self.config = self.parse_config(config)
