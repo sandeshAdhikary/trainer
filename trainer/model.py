@@ -1,7 +1,6 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Dict, Union
 from types import SimpleNamespace
-import numpy as np
 import torch
 from trainer.utils import register_class
 
