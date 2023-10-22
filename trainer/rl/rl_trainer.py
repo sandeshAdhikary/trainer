@@ -392,6 +392,10 @@ class RLTrainer(Trainer, ABC):
                         # Clear current episode reward tracker if done
                         self.current_episode_reward[idx] = 0
 
+        # Log replay buffer size
+        self.logger.log(log_dict={'trainer_step': self.step, 
+                                  'train/replay_buffer_size': self.replay_buffer.idx})
+
         # Save checkpoint
         if (self.save_checkpoint_freq is not None) and (self.epoch % self.save_checkpoint_freq == 0) and (self.step > 0):
             self._save_checkpoint()
