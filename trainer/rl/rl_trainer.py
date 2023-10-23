@@ -147,6 +147,7 @@ class RLTrainer(Trainer, ABC):
                          'train_log': self.train_log, 
                          'eval_log': self.eval_log,
                          'train_end': self.train_end,
+                         'num_checkpoint_saves': self.num_checkpoint_saves,
                          'num_checkpoint_loads': self.num_checkpoint_loads,
                          'obs': self.obs,
                          'done': self.done,
@@ -520,5 +521,7 @@ class RLTrainer(Trainer, ABC):
         self.current_episode_reward = state_dict.get('current_episode_reward', np.zeros(self.env.num_envs))
         self.episode_reward_list = state_dict.get('episode_reward_list', [[] for _ in range(self.env.num_envs)])
         self.num_model_updates = state_dict.get('num_model_updates', 0)
+        self.num_checkpoint_saves = state_dict.get('num_checkpoint_saves', 0)
+        self.num_checkpoint_loads = state_dict.get('num_checkpoint_loads', 0)
 
 
