@@ -108,6 +108,7 @@ class ReplayBuffer(object):
     def load(self, save_dir):
         chunks = os.listdir(save_dir)
         chucks = sorted(chunks, key=lambda x: int(x.split('_')[0]))
+        self.last_save = int(chucks[-1].split('_')[1].split('.')[0]) # The last chunk's end index
         for chunk in chucks:
             start, end = [int(x) for x in chunk.split('.')[0].split('_')]
             path = os.path.join(save_dir, chunk)
@@ -122,4 +123,3 @@ class ReplayBuffer(object):
             if self.infos is not None:
                 self.infos[start:end] = payload[6]
             self.idx = end
-            self.last_save = end

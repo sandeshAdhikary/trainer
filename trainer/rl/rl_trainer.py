@@ -428,6 +428,7 @@ class RLTrainer(Trainer, ABC):
             try:
                 self.replay_buffer.load(f'{self.logger.logdir}/checkpoint/replay_buffer')
             except (UserWarning, Exception) as e:
+                self.logger.log(log_dict={'trainer_step': self.step, 'buffer_load_err': 1})
                 warn(f"Could not restore replay buffer. Error: {e}")
 
 
