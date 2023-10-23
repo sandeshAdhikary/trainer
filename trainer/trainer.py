@@ -285,7 +285,7 @@ class Trainer(ABC):
         except (UserWarning, Exception) as e:
             warn("Could not restore checkpoint.")
             # raise e
-            # return e
+            return e
         
 
     def _save_checkpoint(self, chkpt_name='checkpoint', chkpt_dir=None, log_checkpoint=True, **kwargs):
