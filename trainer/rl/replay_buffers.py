@@ -13,20 +13,25 @@ class ReplayBuffer(object):
         self.capacity = capacity
         self.batch_size = batch_size
         self.device = device
+        self.obs_shape = obs_shape
+        self.action_shape = action_shape 
+        self.store_infos = store_infos
+        self.init_empty_buffer()
 
+    def init_empty_buffer(self):
         # the proprioceptive obs is stored as float32, pixels obs as uint8
-        obs_dtype = np.float32 if len(obs_shape) == 1 else np.uint8
+        obs_dtype = np.float32 if len(self.obs_shape) == 1 else np.uint8
 
-        self.obses = np.empty((capacity, *obs_shape), dtype=obs_dtype)
-        self.k_obses = np.empty((capacity, *obs_shape), dtype=obs_dtype)
-        self.next_obses = np.empty((capacity, *obs_shape), dtype=obs_dtype)
-        self.actions = np.empty((capacity, *action_shape), dtype=np.float32)
-        self.curr_rewards = np.empty((capacity, 1), dtype=np.float32)
-        self.rewards = np.empty((capacity, 1), dtype=np.float32)
-        self.not_dones = np.empty((capacity, 1), dtype=np.float32)
+        self.obses = np.empty((self.capacity, *self.obs_shape), dtype=obs_dtype)
+        self.k_obses = np.empty((self.capacity, *self.obs_shape), dtype=obs_dtype)
+        self.next_obses = np.empty((self.capacity, *self.obs_shape), dtype=obs_dtype)
+        self.actions = np.empty((self.capacity, *self.action_shape), dtype=np.float32)
+        self.curr_rewards = np.empty((self.capacity, 1), dtype=np.float32)
+        self.rewards = np.empty((self.capacity, 1), dtype=np.float32)
+        self.not_dones = np.empty((self.capacity, 1), dtype=np.float32)
         self.infos = None
-        if store_infos:
-            self.infos = [None for _ in range(capacity)]
+        if self.store_infos:
+            self.infos = [None for _ in range(self.capacity)]
 
         self.idx = 0
         self.last_save = 0
@@ -85,8 +90,46 @@ class ReplayBuffer(object):
         
         return sample_outputs
 
+    def save(self, save_dir, save_chunks=False):
+        if save_chunks:
+            self._save_chunks(save_dir)
+        else:
+            path = os.path.join(save_dir, "buffer.pt")
+            payload = [
+                self.obses[:self.idx],
+                self.next_obses[:self.idx],
+                self.actions[:self.idx],
+                self.rewards[:self.idx],
+                self.curr_rewards[:self.idx],
+                self.not_dones[:self.idx]
+            ]
+            if self.infos is not None:
+                # Add infos to payload
+                payload.append(self.infos[:self.idx])
 
-    def save(self, save_dir):
+            torch.save(payload, path)
+
+    def load(self, save_dir, load_chunks=False):
+        if load_chunks:
+            self._load_chunks(save_dir)
+        else:
+            # Initialize buffer with zeros
+            self.init_empty_buffer()
+            # Load saved buffer
+            payload = torch.load(os.path.join(save_dir, "buffer.pt"))
+            # Infer the size of saved buffer; set counter to it
+            self.idx = payload[0].shape[0]
+            # Fill up the loaded buffer values
+            self.obses[:self.idx] = payload[0]
+            self.next_obses[:self.idx] = payload[1]
+            self.actions[:self.idx] = payload[2]
+            self.rewards[:self.idx] = payload[3]
+            self.curr_rewards[:self.idx] = payload[4]
+            self.not_dones[:self.idx] = payload[5]
+            if self.infos is not None:
+                self.infos[:self.idx] = payload[6]
+                
+    def _save_chunks(self, save_dir):
         if self.idx == self.last_save:
             return
         path = os.path.join(save_dir, '%d_%d.pt' % (self.last_save, self.idx))
@@ -105,7 +148,7 @@ class ReplayBuffer(object):
         self.last_save = self.idx
         torch.save(payload, path)
 
-    def load(self, save_dir):
+    def _load_chunks(self, save_dir):
         chunks = os.listdir(save_dir)
         chucks = sorted(chunks, key=lambda x: int(x.split('_')[0]))
         self.last_save = int(chucks[-1].split('_')[1].split('.')[0]) # The last chunk's end index
