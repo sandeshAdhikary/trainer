@@ -1,4 +1,4 @@
-models:
+model:
   SimpleMLModel: trainer.tests.ml_trainer
-trainers:
+trainer:
   MLTrainer: trainer.tests.ml_trainer

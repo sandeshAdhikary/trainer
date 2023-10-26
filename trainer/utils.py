@@ -33,8 +33,8 @@ def register_class(class_type, name, module, overwrite=False):
     # Potentially register class in config
     if (not already_registered) or (already_registered and overwrite):
         with open(files('trainer').joinpath('config.yaml'), 'w') as f:
-            pkg_config[class_type + 's'] = pkg_config.get(class_type + 's') or {}
-            pkg_config[class_type + 's'][name] = module
+            pkg_config[class_type] = pkg_config.get(class_type) or {}
+            pkg_config[class_type][name] = module
             yaml.safe_dump(pkg_config, f)
 
 def import_registered_classes(globals):
