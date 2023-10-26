@@ -9,7 +9,6 @@ if __name__ == "__main__":
 
     args = argparse.ArgumentParser()
     args.add_argument("--eval_packet", type=str, required=True)
-    args.add_argument
     args = args.parse_args()
 
     with open(args.eval_packet, 'rb') as f:
