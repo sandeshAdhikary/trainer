@@ -1,14 +1,104 @@
-from abc import ABC, abstractmethod, abstractproperty
-from trainer import Evaluator
+import argparse
+from envyaml import EnvYAML
+from abc import ABC, abstractmethod
 from functools import partial
+import numpy as np
 import subprocess
 import queue
 from trainer.rl.envs import TrainerEnv
-from copy import deepcopy
-import numpy as np
 from einops import rearrange
+from trainer.storage import Storage
+import tempfile
+from copy import deepcopy
+from trainer.utils import register_class
+from abc import abstractproperty
 
-class RLEvaluator(Evaluator, ABC):
+class Evaluator():
+    
+    def __init__(self, config):
+        self.config = config
+        self.project = self.config['project']
+        self.run = self.config['run']
+        self.sweep = self.config.get('sweep')
+        self.model_name = self.config.get('model_name', 'model_checkpoint.pt')
+        self.saved_model_type = self.config.get('saved_model_type', 'torch')
+        self.set_storage()
+        self.setup_data()
+        self._register_evaluator()
+
+    @abstractproperty
+    def module_path(self):
+        return None
+
+    def _register_evaluator(self, overwrite=False):
+        if self.module_path is not None:
+            register_class('evaluator', self.__class__.__name__, self.module_path)
+
+    def set_storage(self):
+        # Set up model storage: model will be loaded from here
+        self.input_storage = Storage(self.config['storage']['input'])
+        # Set up output storage: evaluation outputs will be saved here
+        self.output_storage = Storage(self.config['storage']['output'])
+        # Create a temporary directory for temp storage
+        self.tmp_root_dir = tempfile.TemporaryDirectory(prefix='trainer_')
+        self.tmp_storage = Storage({
+            'type': 'local',
+            'root_dir': self.tmp_root_dir.name,
+            'project': self.project,
+            'run': self.run
+        })
+
+    def set_model(self, model):
+        self.model = model
+
+    def set_logger(self, logger):
+        self.logger = logger
+
+    def run_eval(self, **kwargs):
+        self.before_eval()
+        eval_output = self.evaluate(async_eval=self.config['async_eval'], **kwargs)
+        self.after_eval(eval_output)
+    
+    def before_eval(self, info=None):
+        """
+        Set up the evaluation dataset/environment
+        """
+        assert self.model is not None, "Model not set"
+        self.load_model()
+        # Set model to eval mode
+        self.model.eval()
+
+    def load_model(self):
+
+        if self.saved_model_type == 'torch':
+            model_ckpt = self.input_storage.load(self.model_name, filetype='torch')
+        elif self.saved_model_type == 'zip':
+            # basename = os.path.splitext(self.model_name)[0]
+            # TODO: Make model names consistent when saving
+            model_ckpt = self.input_storage.load_from_archive(self.model_name, 
+                                                              filenames='model_checkpoint.pt',
+                                                              filetypes='torch')
+        else:
+            raise ValueError(f"Invalid input model format {self.input_model_format}")
+        self.model.load_model(model_ckpt)
+
+    def evaluate(self):
+        """
+        Evaluate model and store evaluation results
+        """
+        raise NotImplementedError
+
+    def after_eval(self, info=None):
+        """
+        Process and save evaluation results
+        """
+        pass
+        
+    @abstractmethod
+    def setup_data(self):
+        raise NotImplementedError
+    
+class RLEvaluator(Evaluator):
     
     def __init__(self, config):
         super().__init__(config)
@@ -20,7 +110,7 @@ class RLEvaluator(Evaluator, ABC):
 
     @abstractproperty
     def module_path(self):
-        return None
+        return None  
 
     def env_fns(self, config):
         """
@@ -40,8 +130,7 @@ class RLEvaluator(Evaluator, ABC):
             self.eval_envs[name] = TrainerEnv(self.env_fns(config))
 
 
-
-    def evaluate(self, max_ep_steps=None, async_eval=False):
+    def evaluate(self, max_ep_steps=None, async_eval=False, eval_log_file=None, eval_output_file=None):
         """
         Evaluate the model. 
         Optionally write log and outputs to eval_log_file and eval_output_file
@@ -131,6 +220,8 @@ class RLEvaluator(Evaluator, ABC):
                         'evaluator_class': self.__class__,
                         'model_class': self.model.__class__,
                         'model_config': self.model.config,
+                        'eval_log_file': f'{env_name}_eval_log_file',
+                        'eval_output_file': f'{env_name}_eval_output_file',
                         }
 
         self.tmp_storage.save(f"{env_name}_eval_packet.pkl", eval_packet, filetype='pickle')
@@ -172,7 +263,6 @@ class RLEvaluator(Evaluator, ABC):
         eval_info = {}
 
         # If no env is passed, assume there is a single self.eval_env
-        # TODO: Fix this when adding evaluator to Trainer
         eval_env = env or self.eval_env
 
         max_ep_steps = max_ep_steps or eval_env.max_episode_steps

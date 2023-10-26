@@ -113,6 +113,7 @@ class Trainer(ABC):
         # Set model to train mode
         self.model.train()
 
+
     def before_epoch(self, info=None):
         pass
     

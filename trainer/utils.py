@@ -22,7 +22,7 @@ def register_class(class_type, name, module, overwrite=False):
     """
     Register the class 
     """
-    assert class_type in ['trainer', 'model']
+    assert class_type in ['trainer', 'model', 'evaluator']
     with open(files('trainer').joinpath('config.yaml'), 'r') as f:
         pkg_config = yaml.safe_load(f)
     pkg_config = pkg_config or {}

@@ -30,7 +30,7 @@ class Model(ABC):
         """
         raise NotImplementedError
 
-    def load_model(self, model_file=None, model_dir=None):
+    def load_model(self, state_dict=None, model_file=None, model_dir=None):
         """
         Load model
         """

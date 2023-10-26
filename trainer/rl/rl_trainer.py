@@ -400,8 +400,6 @@ class RLTrainer(Trainer, ABC):
         # Save checkpoint
         if (self.save_checkpoint_freq is not None) and (self.epoch % self.save_checkpoint_freq == 0) and (self.step > 0):
             self._save_checkpoint()
-            os.path.exists('/project/logdir/wandb/run-20231022_181630-q8ey8o5h/files/checkpoint.zip')
-
             self.num_checkpoint_saves += 1
             self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint/num_checkpoint_saves': self.num_checkpoint_saves})
 
