@@ -75,14 +75,14 @@ class RLEvaluator(Evaluator, ABC):
                 eval_output[env_name] = env_output
                 self.eval_job_errs.append(None)
 
+        # If eval failed, log error and break
+        self._maybe_log_eval_error()
+
+        
         # If async, wait until all eval jobs have completed
         if async_eval:
             self._wait_for_all_eval_jobs()
             eval_output = self._collect_async_eval_results()
-
-
-        # If eval failed, log error and break
-        self._maybe_log_eval_error()
 
         return eval_output
 
