@@ -7,6 +7,8 @@ import importlib
 from importlib.resources import files
 from warnings import warn
 
+CLASS_TYPES = ['trainer', 'model', 'evaluator']
+
 def check_class_registration(pkg_config, class_type, name, module):
     """
     Check if a class with name has already been registered under class_type
@@ -22,7 +24,7 @@ def register_class(class_type, name, module, overwrite=False):
     """
     Register the class 
     """
-    assert class_type in ['trainer', 'model', 'evaluator']
+    assert class_type in CLASS_TYPES
     with open(files('trainer').joinpath('config.yaml'), 'r') as f:
         pkg_config = yaml.safe_load(f)
     pkg_config = pkg_config or {}
@@ -40,7 +42,7 @@ def import_registered_classes(globals):
         pkg_config = yaml.load(f, Loader=yaml.FullLoader)
     if pkg_config is not None:
         # Import registered models
-        for module_type in ['models', 'trainers']:
+        for module_type in CLASS_TYPES:
             if pkg_config.get(module_type) is not None:
                 for name, module in pkg_config[module_type].items():
                     try:
