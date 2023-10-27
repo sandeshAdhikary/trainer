@@ -8,5 +8,5 @@ setup(name='trainer',
           "trainer": ["*.yaml"],
       },
       include_package_data=True,
-      install_requires=[line.strip() for line in open("requirements.txt", "r").readlines()],
+    #   install_requires=[line.strip() for line in open("requirements.txt", "r").readlines()],
       )

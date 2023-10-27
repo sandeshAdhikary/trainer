@@ -9,4 +9,4 @@ einops
 matplotlib
 wandb
 sqlalchemy
-pytorch
+torch
