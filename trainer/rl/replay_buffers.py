@@ -90,44 +90,65 @@ class ReplayBuffer(object):
         
         return sample_outputs
 
+    def state_dict(self):
+        state_dict = {
+            'obses': self.obses[:self.idx],
+            'next_obses': self.next_obses[:self.idx],
+            'actions': self.actions[:self.idx],
+            'rewards': self.rewards[:self.idx],
+            'curr_rewards': self.curr_rewards[:self.idx],
+            'not_dones': self.not_dones[:self.idx],
+            'idx': self.idx
+        }
+        if self.infos is not None:
+            state_dict.update({
+                'infos': self.infos[:self.idx]
+            })
+        return state_dict
+
+
+    def load_state_dict(self, state_dict):
+        # Initialize buffer with zeros
+        self.init_empty_buffer()
+        # Load saved buffer
+        self.idx = state_dict['idx']
+        self.obses[:self.idx] = state_dict['obses']
+        self.next_obses[:self.idx] = state_dict['next_obses']
+        self.actions[:self.idx] = state_dict['actions']
+        self.rewards[:self.idx] = state_dict['rewards']
+        self.curr_rewards[:self.idx] = state_dict['curr_rewards']
+        self.not_dones[:self.idx] = state_dict['not_dones']
+        if self.infos is not None:
+            self.infos[:self.idx] = state_dict['infos']
+
     def save(self, save_dir, save_chunks=False):
         if save_chunks:
-            self._save_chunks(save_dir)
+            raise NotImplementedError
+            # self._save_chunks(save_dir)
         else:
-            path = os.path.join(save_dir, "buffer.pt")
-            payload = [
-                self.obses[:self.idx],
-                self.next_obses[:self.idx],
-                self.actions[:self.idx],
-                self.rewards[:self.idx],
-                self.curr_rewards[:self.idx],
-                self.not_dones[:self.idx]
-            ]
-            if self.infos is not None:
-                # Add infos to payload
-                payload.append(self.infos[:self.idx])
-
-            torch.save(payload, path)
+            torch.save(self.state_dict(), path)
 
     def load(self, save_dir, load_chunks=False):
         if load_chunks:
-            self._load_chunks(save_dir)
+            raise NotImplementedError
+            # self._load_chunks(save_dir)
         else:
-            # Initialize buffer with zeros
-            self.init_empty_buffer()
-            # Load saved buffer
-            payload = torch.load(os.path.join(save_dir, "buffer.pt"))
-            # Infer the size of saved buffer; set counter to it
-            self.idx = payload[0].shape[0]
-            # Fill up the loaded buffer values
-            self.obses[:self.idx] = payload[0]
-            self.next_obses[:self.idx] = payload[1]
-            self.actions[:self.idx] = payload[2]
-            self.rewards[:self.idx] = payload[3]
-            self.curr_rewards[:self.idx] = payload[4]
-            self.not_dones[:self.idx] = payload[5]
-            if self.infos is not None:
-                self.infos[:self.idx] = payload[6]
+            raise NotImplementedError
+            # # Initialize buffer with zeros
+            # self.init_empty_buffer()
+            # # Load saved buffer
+            # payload = torch.load(os.path.join(save_dir, "buffer.pt"))
+            # # Infer the size of saved buffer; set counter to it
+            # self.idx = payload[0].shape[0]
+            # # Fill up the loaded buffer values
+            # self.obses[:self.idx] = payload[0]
+            # self.next_obses[:self.idx] = payload[1]
+            # self.actions[:self.idx] = payload[2]
+            # self.rewards[:self.idx] = payload[3]
+            # self.curr_rewards[:self.idx] = payload[4]
+            # self.not_dones[:self.idx] = payload[5]
+            # if self.infos is not None:
+            #     self.infos[:self.idx] = payload[6]
                 
     def _save_chunks(self, save_dir):
         if self.idx == self.last_save:

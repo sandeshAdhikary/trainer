@@ -1,5 +1,3 @@
-import argparse
-from envyaml import EnvYAML
 from abc import ABC, abstractmethod
 from functools import partial
 import numpy as np
@@ -22,19 +20,23 @@ class Evaluator():
         self.sweep = self.config.get('sweep')
         self.model_name = self.config.get('model_name', 'model_checkpoint.pt')
         self.saved_model_type = self.config.get('saved_model_type', 'torch')
-        self.set_storage()
+        self._set_storage()
         self.setup_data()
         self._register_evaluator()
+        self._setup_terminal_display()
 
     @abstractproperty
     def module_path(self):
         return None
 
+    def _setup_terminal_display():
+        pass
+
     def _register_evaluator(self, overwrite=False):
         if self.module_path is not None:
             register_class('evaluator', self.__class__.__name__, self.module_path)
 
-    def set_storage(self):
+    def _set_storage(self):
         # Set up model storage: model will be loaded from here
         self.input_storage = Storage(self.config['storage']['input'])
         # Set up output storage: evaluation outputs will be saved here
@@ -55,31 +57,36 @@ class Evaluator():
         self.logger = logger
 
     def run_eval(self, **kwargs):
-        self.before_eval()
+        self.before_eval(**kwargs)
         eval_output = self.evaluate(async_eval=self.config['async_eval'], **kwargs)
         self.after_eval(eval_output)
+        return eval_output
     
     def before_eval(self, info=None):
         """
         Set up the evaluation dataset/environment
         """
         assert self.model is not None, "Model not set"
-        self.load_model()
+        if (info is not None) and info.get('load_checkpoint'):
+            self.load_model()
         # Set model to eval mode
         self.model.eval()
 
-    def load_model(self):
+    def load_model(self, state_dict=None):
 
-        if self.saved_model_type == 'torch':
-            model_ckpt = self.input_storage.load(self.model_name, filetype='torch')
-        elif self.saved_model_type == 'zip':
-            # basename = os.path.splitext(self.model_name)[0]
-            # TODO: Make model names consistent when saving
-            model_ckpt = self.input_storage.load_from_archive(self.model_name, 
-                                                              filenames='model_checkpoint.pt',
-                                                              filetypes='torch')
+        if state_dict is not None:
+            model_ckpt = state_dict
         else:
-            raise ValueError(f"Invalid input model format {self.input_model_format}")
+            if self.saved_model_type == 'torch':
+                model_ckpt = self.input_storage.load(self.model_name, filetype='torch')
+            elif self.saved_model_type == 'zip':
+                # basename = os.path.splitext(self.model_name)[0]
+                # TODO: Make model names consistent when saving
+                model_ckpt = self.input_storage.load_from_archive(self.model_name, 
+                                                                filenames='model_checkpoint.pt',
+                                                                filetypes='torch')
+            else:
+                raise ValueError(f"Invalid input model format {self.input_model_format}")
         self.model.load_model(model_ckpt)
 
     def evaluate(self):
@@ -334,6 +341,7 @@ class RLEvaluator(Evaluator):
 
         if eval_output_file is not None:
             self.output_storage.save(eval_output_file, eval_info, filetype='torch')
+
 
         return eval_info
     

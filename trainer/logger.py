@@ -31,6 +31,7 @@ class Logger(ABC):
         # Set image downscaling factor to prevent huge file sizes. 1 means no downscaling
         self.img_downscale_factor = config.get('img_downscale_factor', 3)
         self.img_downscale_factor = max(int(self.img_downscale_factor), 1)
+        self.log_freq = config.get('log_freq', 1)
 
         self.sw_type = config.get('sw', None) # Summary writer
         # Create a summary writer if not provided
@@ -75,8 +76,8 @@ class Logger(ABC):
             "Must either provide a log_dict or a (key, value and step) tuple!"
             self._try_sw_log(key=key, value=value, step=step)
 
-    def log_checkpoint(self):
-        self._try_sw_log_checkpoint()
+    def log_checkpoint(self, filepath=None):
+        self._try_sw_log_checkpoint(filepath)
 
     def restore_checkpoint(self):
         """
@@ -159,9 +160,13 @@ class Logger(ABC):
             raise NotImplementedError("Only wandb is supported for now")
 
 
-    def _try_sw_log_checkpoint(self):
+    def _try_sw_log_checkpoint(self, filepath=None):
         if self.sw_type == 'wandb':
-            wandb.save(os.path.join(self.logdir, 'checkpoint.zip'), policy='now', base_path=self.logdir)
+            if filepath is None:
+                # assume checkpoint is saved in logdir as ckpt.zip
+                wandb.save(os.path.join(self.logdir, 'ckpt.zip'), policy='now', base_path=self.logdir)
+            else:
+                wandb.save(filepath, policy='now')    
             # Sync wandb
             command = f'wandb sync {self.logdir} --id {self.run_id} -p {self.project}'
             os.system(command)
@@ -172,9 +177,9 @@ class Logger(ABC):
             try:
                 with TemporaryDirectory(suffix=datetime.now().strftime("%Y-%m-%d_%H-%M-%S")) as tmp_dir:            
                     # Download checkpoint zip file
-                    wandb.restore("checkpoint.zip", replace=True)
+                    wandb.restore("ckpt.zip", replace=True)
                     # wandb.restore("checkpoint.zip", run_path=self._sw.path, replace=True)
-                    chkpt_zip = f"{self.dir}/checkpoint.zip"
+                    chkpt_zip = f"{self.dir}/ckpt.zip"
                     if os.path.exists(chkpt_zip):
                         # Extract the restored files ono tmp dir
                         with zipfile.ZipFile(chkpt_zip, 'r') as zip_ref:

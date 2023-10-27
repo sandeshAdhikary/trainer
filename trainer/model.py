@@ -2,13 +2,13 @@ from abc import ABC
 from typing import Dict, Union
 from types import SimpleNamespace
 import torch
-from trainer.utils import register_class
+# from trainer.utils import register_class
 
 class Model(ABC):
 
     def __init__(self, config):
         self.config = self.parse_config(config)
-        self._register_model()
+        # self._register_model()
 
     def parse_config(self, config: Dict) -> Union[SimpleNamespace, Dict]:
         """
@@ -22,6 +22,9 @@ class Model(ABC):
         raise NotImplementedError
 
     def evaluation_step(self):
+        raise NotImplementedError
+    
+    def state_dict(self):
         raise NotImplementedError
 
     def save_model(self, filename, save_optimizers=True):
@@ -55,6 +58,6 @@ class Model(ABC):
     def module_path(self):
         return None
 
-    def _register_model(self):
-        if self.module_path is not None:
-            register_class('model', self.__class__.__name__, self.module_path)
+    # def _register_model(self):
+    #     if self.module_path is not None:
+    #         register_class('model', self.__class__.__name__, self.module_path)

@@ -3,9 +3,7 @@ from abc import ABC, abstractmethod
 from typing import Dict
 from trainer.model import Model
 import trainer.utils as utils
-import os
 from trainer.logger import Logger
-import multiprocessing as mp
 from rich.layout import Layout
 from rich.console import Console
 from rich.panel import Panel
@@ -14,17 +12,18 @@ from rich.progress import (Progress, MofNCompleteColumn, BarColumn, TextColumn,
 from rich.columns import Columns
 from rich.live import Live
 from collections import deque
-import shutil
 from warnings import warn
 from contextlib import nullcontext
-from trainer.utils import register_class
+# from trainer.utils import register_class
+from trainer.storage import Storage
+import tempfile
 
 class Trainer(ABC):
 
     def __init__(self, config: Dict, model: Model = None, logger: Logger = None) -> None:
         self.config = self.parse_config(config)
         self._setup(config, model, logger)
-        self._register_trainer()
+        # self._register_trainer()
     
     def fit(self, num_train_steps: int=None, trainer_state=None) -> None:
         self.num_train_steps = num_train_steps or self.config['num_train_steps']
@@ -48,29 +47,8 @@ class Trainer(ABC):
         train_step_output = self.model.training_step(batch, batch_idx)
         self.train_log.append({'step': self.step, 'log': train_step_output})
 
-    def evaluate(self, eval_data=None, training_mode=False):
-        """"
-        Evaluation outputs are written onto a global dict
-        to allow for asynchronous evaluation
-        """
-        run_eval = True
-        if training_mode:
-            run_eval = (self.step > 0) and (self.step % self.eval_freq == 0) 
-
-        if run_eval:
-            self.model.eval()
-            if self.async_eval:
-                # Run evaluation asynchronously, so training can continue
-                if hasattr(self, 'eval_process') and self.eval_process is not None:
-                    # Get results from last eval_process
-                    # If last eval_process has not completed, wait for it
-                    eval_step_output = self.eval_process.join()
-                    self.eval_log.append({'step': self.step, 'log': eval_step_output})
-                self.eval_process = mp.Process(target=self.model.evaluation_step, args=(eval_data,))
-                self.eval_process.start()
-            else:
-                eval_step_output = self.model.evaluation_step(eval_data)
-                self.eval_log.append({'step': self.step, 'log': eval_step_output})
+    def evaluate(self, eval_data=None, trainer_mode=False):
+        raise NotImplementedError
     
     def set_model(self, model: Model) -> None:
         self.model = model
@@ -96,10 +74,15 @@ class Trainer(ABC):
         Callbacks before training starts
         """
         self.init_trainer_state(trainer_state)
-
+        
         # Make sure the model and logger are set
         assert self.model is not None, "Model not set. Use trainer.set_model(model) to do so."
         assert self.logger is not None, "Logger not set. Use trainer.set_logger(logger) to do so"
+        # TODO: Should project/runs be defined before logger?
+        self.project = self.logger.project
+        self.run = self.logger.run_id
+        self._set_storage()
+        self.setup_evaluator()
 
         self._setup_terminal_display(self.config)
         self._set_seeds(self.config)
@@ -176,10 +159,31 @@ class Trainer(ABC):
     @property
     def module_path(self):
         return None
+    
+    def _set_storage(self):
+        # Update project and run_id for stroage defs
+        for name in self.config['storage'].keys():
+            self.config['storage'][name].update({
+                'project': self.project,
+                'run': self.run
+            })
 
-    def _register_trainer(self, overwrite=False):
-        if self.module_path is not None:
-            register_class('trainer', self.__class__.__name__, self.module_path)
+        # Set up model storage: model will be loaded from here
+        self.input_storage = Storage(self.config['storage']['input'])
+        # Set up output storage: evaluation outputs will be saved here
+        self.output_storage = Storage(self.config['storage']['output'])
+        # Create a temporary directory for temp storage
+        self.tmp_root_dir = tempfile.TemporaryDirectory(prefix='trainer')
+        self.tmp_storage = Storage({
+            'type': 'local',
+            'root_dir': self.tmp_root_dir.name,
+            'project': self.project,
+            'run': self.run
+        })
+
+    # def _register_trainer(self, overwrite=False):
+    #     if self.module_path is not None:
+    #         register_class('trainer', self.__class__.__name__, self.module_path)
 
     def parse_config(self, config: Dict) -> Dict:
         return config
@@ -213,6 +217,9 @@ class Trainer(ABC):
         self.logger = logger
         self._set_seeds(config)
         self.setup_data(config)
+
+    def setup_evaluator(self):
+        raise NotImplementedError
 
     def _setup_terminal_display(self, config: Dict) -> None:
             
@@ -269,80 +276,105 @@ class Trainer(ABC):
             utils.set_seed_everywhere(seed)
 
     def _load_checkpoint(self, chkpt_name='checkpoint', log_checkpoint=True):
-        # Download checkpoint from logger
         try:
-            if not os.path.exists(f'{self.logger.logdir}/checkpoint'):
-                os.makedirs(f'{self.logger.logdir}/checkpoint', exist_ok=True)
-            self.logger.restore_checkpoint()
-            # Load the trainer state
-            trainer_state_dict = torch.load(f'{self.logger.logdir}/checkpoint/trainer_{chkpt_name}.pt')
-            self.init_trainer_state(trainer_state_dict)
-            # Load the model state
-            self.model.load_model(model_file=f'{self.logger.logdir}/checkpoint/model_{chkpt_name}.pt')
-            if log_checkpoint:
-                # Log the checkpoint load event
-                self.num_checkpoint_loads += 1
-                self.logger.log(key='checkpoint/num_checkpoint_loads', value=self.num_checkpoint_loads, step=self.logger._sw.step)
+            # Restore checkpoint: model,trainer,replay_buffer
+            ckpt = super()._load_checkpoint_dict(chkpt_name=chkpt_name,
+                                                 filenames=['model_ckpt.pt', 'trainer_ckpt.pt'],
+                                                 filetypes=['torch', 'torch']
+                                                 )
         except (UserWarning, Exception) as e:
-            warn("Could not restore checkpoint.")
-            # raise e
+            self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_load_error': 1})
+            warn(f"Checkpoint load error: Could not load state dict. Error: {e.args}")
             return e
+
+        # Update model and trainer states
+        try:
+            self.model.load_model(state_dict=ckpt['model_ckpt.pt'])
+            self.init_trainer_state(ckpt['trainer_ckpt.pt'])
+        except (UserWarning, Exception) as e:
+            self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_load_error': 1})
+            warn(f"Checkpoint load error: State dicts loaded, but could not update model or trainer. Error: {e.args}")
+            return e
+
+        if log_checkpoint:
+            # Log the checkpoint load event
+            self.num_checkpoint_loads += 1
+            self.logger.log(key='checkpoint/num_checkpoint_loads', value=self.num_checkpoint_loads, step=self.logger._sw.step)
+
+    def _load_checkpoint_dict(self, chkpt_name='checkpoint', filenames=None, filetypes=None):
+        if filenames is None:
+            # Assume only model and trainer checkpoints
+            filenames = ['model_ckpt.pt', 'trainer_ckpt.pt']
+        if filetypes is None:
+            # Assume all files are torch-loadable
+            filetypes = ['torch']*len(filenames)
+        # Download checkpoint from logger
+        if self.config['load_checkpoint_type'] == 'torch':
+            ckpt = self.input_storage.load(f'model_{chkpt_name}.pt')
+        elif self.config['load_checkpoint_type'] == 'zip':
+            ckpt = self.input_storage.load_from_archive("ckpt.zip", 
+                                                        filenames=filenames,
+                                                        filetypes=filetypes)
+
+        return ckpt
         
 
-    def _save_checkpoint(self, chkpt_name='checkpoint', chkpt_dir=None, log_checkpoint=True, **kwargs):
+    def _save_checkpoint(self, log_checkpoint=True, save_to_output_storage=True):
         """
         Zip the checkpoint folder and log it
         """
-        # Set up the checkpoint directory where the zip file will be saved
-        chkpt_dir = chkpt_dir or self.logger.logdir 
-        save_dir = os.path.join(chkpt_dir, chkpt_name)
-
-        if kwargs.get('overwrite'):
-            # Delete the old save_dir and replace with new one
-            if os.path.exists(save_dir):
-                shutil.rmtree(save_dir)
-            os.makedirs(save_dir, exist_ok=False)
-        else:
-            os.makedirs(save_dir, exist_ok=True)
-
-        self._create_checkpoint_files(chkpt_name, save_dir, **kwargs)
+        # Create an archive of the checkpoint files
+        self._create_checkpoint_files(archive=True)
+        if save_to_output_storage:
+            # Save checkpoint to output storage
+            self.output_storage.upload(files=self.tmp_storage.storage_path('ckpt.zip'))
+            # self.output_storage.upload(files=tmp_ckpt_path)
         if log_checkpoint:
-            # Compress tmp_dir into a zip file saved in the chkpt_dir
-            shutil.make_archive(base_name=save_dir,
-                                format='zip', 
-                                root_dir=save_dir)
+            # Save checkpoint to logger (e.g. wandb)
+            self.logger.log_checkpoint(filepath=self.tmp_storage.storage_path('ckpt.zip'))
 
-            # Log the checkpoint files to the logger
-            self.logger.log_checkpoint()
-            
-            # # Delete the archive
-            # os.remove(f"{save_dir}.zip")
-
-
-    def _create_checkpoint_files(self, chkpt_name='checkpoint', chkpt_dir=None, save_optimizers=True):
+    def _create_checkpoint_files(self, save_optimizers=True, temporary_dir=True, archive=True, **kwargs):
         """
-        Custom Trainer class can add other checkpoint files here.
-        The checkpoint files should have format {name}_chkpt.pt
+        Save checkpoint files to storage
         """
-        # Create a (temporary) checkpoint directory
-        chkpt_dir = chkpt_dir or os.path.join(self.logger.logdir, chkpt_name)
-        if os.path.exists(chkpt_dir):
-            # Delete the old checkpoint
-            shutil.rmtree(chkpt_dir)
-        os.makedirs(chkpt_dir, exist_ok=False)
+        storage = self.tmp_storage if temporary_dir else self.output_storage
+        # Get checkpoint state
+        ckpt_state = self._get_checkpoint_state(save_optimizers=save_optimizers, **kwargs)
 
-        # Save trainer state
+        for name,state in ckpt_state.items():
+            storage.save(f"ckpt/{name}_ckpt.pt", state, 'torch')
+
+        if archive:
+            files=[f"ckpt/{name}_ckpt.pt" for name in ckpt_state.keys()]
+            # Make the archive
+            storage.make_archive(files, zipfile_name='ckpt.zip')
+            # Delete the files once they've been archived
+            storage.delete(directory='ckpt')
+
+    def _get_checkpoint_state(self, save_optimizers, **kwargs):
+        # # Save trainer state
         trainer_state = {'step': self.step,
+                         'epoch': self.epoch,
                          'train_log': self.train_log, 
                          'eval_log': self.eval_log,
                          'train_end': self.train_end,
-                         'num_checkpoint_loads': self.num_checkpoint_loads
+                         'num_checkpoint_saves': self.num_checkpoint_saves,
+                         'num_checkpoint_loads': self.num_checkpoint_loads,
+                         'obs': self.obs,
+                         'done': self.done,
+                         'reward': self.reward,
+                         'num_episodes': self.num_episodes,
+                         'episode': self.episode,
+                         'current_episode_reward': self.current_episode_reward,
+                         'episode_reward_list': self.episode_reward_list,
+                         'num_model_updates': self.num_model_updates,
+                         'epoch': self.epoch
                         }
-        torch.save(trainer_state, os.path.join(chkpt_dir, f'trainer_{chkpt_name}.pt'))
-        # Save model state
-        self.model.save_model(os.path.join(chkpt_dir, f'model_{chkpt_name}.pt'), save_optimizers=save_optimizers)
-
-
+        ckpt_state = {
+            'trainer': trainer_state,
+            'model': self.model.state_dict(save_optimizers=save_optimizers),
+        }
+        return ckpt_state
 
 if __name__ == "__main__":
     import yaml

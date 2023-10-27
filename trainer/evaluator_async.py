@@ -1,9 +1,11 @@
+import builtins
 import argparse
 import pickle
-# Load all registered models and trainers
-# This is needed to load model/trainer/evaluator classes from pickles
-from trainer.utils import import_registered_classes
-import_registered_classes(globals())
+from trainer.rl.rl_evaluator import TrainingRLEvaluator
+from importlib import import_module
+
+def import_class(module_path, class_name):
+    return getattr(import_module(module_path),class_name)
 
 if __name__ == "__main__":
 
@@ -14,12 +16,27 @@ if __name__ == "__main__":
     with open(args.eval_packet, 'rb') as f:
         eval_packet = pickle.load(f)
 
-    # Load evaluator
-    evaluator = eval_packet['evaluator_class'](eval_packet['evaluator_config'])
-    # Load model
-    model = eval_packet['model_class'](eval_packet['model_config'])
+    # Set up evaluator
+    evaluator_packet = eval_packet['evaluator']
+    evaluator_class = import_class(evaluator_packet['module'], evaluator_packet['class'])
+    if evaluator_class==TrainingRLEvaluator:
+        # This class needs a trainer as input
+        trainer_packet = eval_packet['trainer']
+        trainer_class = import_class(trainer_packet['module'], trainer_packet['class'])
+        trainer = trainer_class(trainer_packet['config'])
+        evaluator = evaluator_class(evaluator_packet['config'], trainer)
+    else:
+        evaluator = evaluator_class(evaluator_packet['config'])
+
+
+    # Set up model
+    model_packet = eval_packet['model']
+    model_class = import_class(model_packet['module'], model_packet['class'])
+    model = model_class(model_packet['config'])
+    if model_packet.get('state_dict') is not None:
+        # Load model state dict
+        model.load_model(state_dict=model_packet['state_dict'])    
     evaluator.set_model(model)
-    # Log and output files
-    eval_log_file = eval_packet.get('eval_log_file')
-    eval_output_file = eval_packet.get('eval_output_file')
-    evaluator.evaluate()
+
+    # Run evaluation
+    evaluator.evaluate(storage=eval_packet['eval_storage'])
