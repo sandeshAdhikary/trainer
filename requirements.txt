@@ -1,0 +1,12 @@
+chardet
+gym
+pillow
+rich
+tqdm
+imageio
+imageio-ffmpeg
+einops
+matplotlib
+wandb
+sqlalchemy
+pytorch
