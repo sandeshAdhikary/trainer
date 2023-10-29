@@ -1,7 +1,6 @@
 import wandb
 from functools import partial
 from copy import deepcopy
-import collections.abc
 from datetime import datetime
 from time import sleep
 from trainer.utils import flatten_dict, unflatten_dict, nested_dict_update

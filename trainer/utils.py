@@ -6,6 +6,7 @@ import yaml
 import importlib
 from importlib.resources import files
 from warnings import warn
+import collections
 
 CLASS_TYPES = ['trainer', 'model', 'evaluator']
 
