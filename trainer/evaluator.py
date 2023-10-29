@@ -8,7 +8,6 @@ from einops import rearrange
 from trainer.storage import Storage
 import tempfile
 from copy import deepcopy
-from trainer.utils import register_class
 from abc import abstractproperty
 
 class Evaluator():
@@ -22,7 +21,7 @@ class Evaluator():
         self.saved_model_type = self.config.get('saved_model_type', 'torch')
         self._set_storage()
         self.setup_data()
-        self._register_evaluator()
+        # self._register_evaluator()
         self._setup_terminal_display()
 
     @abstractproperty
@@ -32,9 +31,9 @@ class Evaluator():
     def _setup_terminal_display():
         pass
 
-    def _register_evaluator(self, overwrite=False):
-        if self.module_path is not None:
-            register_class('evaluator', self.__class__.__name__, self.module_path)
+    # def _register_evaluator(self, overwrite=False):
+    #     if self.module_path is not None:
+    #         register_class('evaluator', self.__class__.__name__, self.module_path)
 
     def _set_storage(self):
         # Set up model storage: model will be loaded from here
