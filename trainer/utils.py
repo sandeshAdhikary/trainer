@@ -54,22 +54,22 @@ def check_class_registration(pkg_config, class_type, name, module):
     
     return False
 
-def register_class(class_type, name, module, overwrite=False):
-    """
-    Register the class 
-    """
-    assert class_type in CLASS_TYPES
-    with open(files('trainer').joinpath('config.yaml'), 'r') as f:
-        pkg_config = yaml.safe_load(f)
-    pkg_config = pkg_config or {}
-    # Check if class has already been registered
-    already_registered = check_class_registration(pkg_config, class_type, name, module)
-    # Potentially register class in config
-    if (not already_registered) or (already_registered and overwrite):
-        with open(files('trainer').joinpath('config.yaml'), 'w') as f:
-            pkg_config[class_type] = pkg_config.get(class_type) or {}
-            pkg_config[class_type][name] = module
-            yaml.safe_dump(pkg_config, f)
+# def register_class(class_type, name, module, overwrite=False):
+#     """
+#     Register the class 
+#     """
+#     assert class_type in CLASS_TYPES
+#     with open(files('trainer').joinpath('config.yaml'), 'r') as f:
+#         pkg_config = yaml.safe_load(f)
+#     pkg_config = pkg_config or {}
+#     # Check if class has already been registered
+#     already_registered = check_class_registration(pkg_config, class_type, name, module)
+#     # Potentially register class in config
+#     if (not already_registered) or (already_registered and overwrite):
+#         with open(files('trainer').joinpath('config.yaml'), 'w') as f:
+#             pkg_config[class_type] = pkg_config.get(class_type) or {}
+#             pkg_config[class_type][name] = module
+#             yaml.safe_dump(pkg_config, f)
 
 def import_registered_classes(globals):
     with open(files('trainer').joinpath('config.yaml')) as f:
