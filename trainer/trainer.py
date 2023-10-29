@@ -96,6 +96,18 @@ class Trainer(ABC):
         # Set model to train mode
         self.model.train()
 
+        # Upload configs to storage
+        self.output_storage.save(filename='trainer_config.yaml', 
+                                 data=self.config,
+                                 filetype='yaml')
+        self.output_storage.save(filename='model_config.yaml', 
+                                 data=self.model.config,
+                                 filetype='yaml')
+        self.output_storage.save(filename='logger_config.yaml', 
+                                 data=self.logger.config,
+                                 filetype='yaml')
+
+
 
     def before_epoch(self, info=None):
         pass

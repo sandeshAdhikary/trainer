@@ -9,6 +9,8 @@ import torch
 import numpy as np
 import shutil
 import zipfile
+import yaml
+from envyaml import EnvYAML
 
 class Storage:
     """
@@ -53,7 +55,6 @@ class BaseStorage(ABC):
                         - torch: use torch.load to open file
                         - numpy: use numpy.load to open file           
         """
-        assert filetype in ['text', 'torch', 'numpy'], f"Invalid filetype {filetype}"
         with tempfile.TemporaryDirectory() as tmp_dir:
             # Download file to local machine
             self.download(filename, tmp_dir)
@@ -65,6 +66,11 @@ class BaseStorage(ABC):
                 return torch.load(os.path.join(tmp_dir, filename))
             elif filetype == 'numpy':
                 return np.load(os.path.join(tmp_dir, filename))
+            elif filetype == 'env_yaml':
+                return EnvYAML(os.path.join(tmp_dir, filename))
+            elif filetype == 'yaml':
+                with open(os.path.join(tmp_dir, filename), 'r') as f:
+                    return yaml.safe_load(f)
             else:
                 raise ValueError(f"Invalid filetype {filetype}")
 
@@ -79,8 +85,6 @@ class BaseStorage(ABC):
             filenames = [filenames]
             filetypes = [filetypes]
         
-        all_valid = all([x in ['text', 'numpy', 'torch'] for x in filetypes])
-        assert all_valid, f"Invalid filetype in {filetypes}"
         with tempfile.TemporaryDirectory() as tmp_dir:
             # Download and extract the archive
             self.download(archive_name, tmp_dir, extract_archives=True)
@@ -94,10 +98,14 @@ class BaseStorage(ABC):
                     outputs[filename] = torch.load(os.path.join(tmp_dir, filename))
                 elif filetype == 'numpy':
                     outputs[filename] = np.load(os.path.join(tmp_dir, filename))
+                elif filetype == 'env_yaml':
+                    return EnvYAML(os.path.join(tmp_dir, filename))
+                elif filetype == 'yaml':
+                    with open(os.path.join(tmp_dir, filename), 'r') as f:
+                        return yaml.safe_load(f)
                 else:
                     raise ValueError(f"Invalid filetype {filetype}")
         return outputs
-        # return outputs[0] if single_file else outputs
 
 class WandbStorage(BaseStorage):
     """"
@@ -170,6 +178,9 @@ class LocalFileSystemStorage(BaseStorage):
         elif filetype == 'torch':
             with open(storage_filename, mode='wb') as f:
                 torch.save(data, f)
+        elif filetype in ['yaml', 'env_yaml']:
+            with open(storage_filename, mode='w') as f:
+                yaml.safe_dump(data, f)
         else:
             raise NotImplementedError(f"Filetype {filetype} not implemented")  
 
@@ -277,6 +288,9 @@ class SSHFileSystemStorage(BaseStorage):
             elif filetype == 'torch':
                 with sftp.file(storage_filename, mode='wb') as f:
                     torch.save(data, f)
+            elif filetype in ['yaml', 'env_yaml']:
+                with sftp.file(storage_filename, mode='wb') as f:
+                    yaml.safe_dump(data, f)
             else:
                 raise NotImplementedError(f"Filetype {filetype} not implemented")   
 

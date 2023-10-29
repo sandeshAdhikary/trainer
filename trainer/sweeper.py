@@ -4,6 +4,7 @@ from copy import deepcopy
 import collections.abc
 from datetime import datetime
 from time import sleep
+from trainer.utils import flatten_dict, unflatten_dict, nested_dict_update
 
 class Sweeper:
 
@@ -32,40 +33,6 @@ class WandBSweeper():
         default_params = deepcopy(config)
         default_params.pop('sweeper')
         self.default_params = default_params
-
-
-    def flatten_dict(self, d, parent_key='', separator='.'):
-        flattened = {}
-        for key, value in d.items():
-            new_key = f"{parent_key}{separator}{key}" if parent_key else key
-            if isinstance(value, dict):
-                sub_keys = list(value.keys())
-                if (len(sub_keys) == 1) and (sub_keys[0] == 'values'):
-                    flattened[new_key] = value
-                else:
-                    flattened.update(self.flatten_dict(value, new_key, separator=separator))
-            else:
-                raise ValueError(f"Invalid value type {type(value)} for key {key}")
-        return flattened
-    
-    def unflatten_dict(self, d, separator='.'):
-        unflattened = {}
-        for key, value in d.items():
-            keys = key.split(separator)
-            current_level = unflattened
-            for k in keys[:-1]:
-                current_level = current_level.setdefault(k, {})
-            current_level[keys[-1]] = value
-        return unflattened
-
-    def nested_dict_update(self, d, u):
-        # https://stackoverflow.com/questions/3232943/update-value-of-a-nested-dictionary-of-varying-depth
-        for k, v in u.items():
-            if isinstance(v, collections.abc.Mapping):
-                d[k] = self.nested_dict_update(d.get(k, {}), v)
-            else:
-                d[k] = v
-        return d
     
     def make_wandb_sweep(self):
         parameters = self.config['parameters']
@@ -76,7 +43,7 @@ class WandBSweeper():
             'name': self.sweep_name,
             'method': method,
             'metric': {"goal": goal, "name": "sweep_score"},
-            'parameters': self.flatten_dict(parameters),    
+            'parameters': flatten_dict(parameters),    
         }
         
         # Create sweep and set up sweep if
@@ -146,11 +113,11 @@ class WandBSweeper():
     
         # Get trial_params from wandb
         run = wandb.init(**wandb_kwargs)
-        trail_params = self.unflatten_dict(dict(wandb.config))
+        trail_params = unflatten_dict(dict(wandb.config))
         
         # Create a config for the objective run
         obj_config = deepcopy(self.default_params)
-        obj_config = self.nested_dict_update(obj_config, trail_params) # Update with trial params from wandb sweeper
+        obj_config = nested_dict_update(obj_config, trail_params) # Update with trial params from wandb sweeper
 
             
         # Instantiate trainer

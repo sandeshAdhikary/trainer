@@ -9,11 +9,13 @@ import numpy as np
 from einops import rearrange
 from rich.progress import Progress, BarColumn, TextColumn, TaskProgressColumn, TimeElapsedColumn, TimeRemainingColumn, MofNCompleteColumn
 import time
+from contextlib import nullcontext
 
 class RLEvaluator(Evaluator, ABC):
     
     def __init__(self, config):
         self.num_eval_episodes = config.get('num_eval_episodes', 1)
+        self.display_progress = config.get('display_progress', False)
         super().__init__(config)
 
     @abstractmethod
@@ -236,62 +238,64 @@ class RLEvaluator(Evaluator, ABC):
     
 
         eval_info = {}
-        for i in range(max_steps):
-            # print(f"Step {i}/{max_steps}")
+        progress_bar = self.progress_bar if self.display_progress else nullcontext()
+        with progress_bar:
+            for i in range(max_steps):
+                # print(f"Step {i}/{max_steps}")
+                if eval_storage is not None:
+                    eval_storage.save(eval_log_file, f"step:{i}\n", filetype='text', write_mode='a')
+
+                if hasattr(self, 'progress_bar') and (env_name is not None):
+                    self.progress_bar.update(self.progress_tasks[env_name], completed=i)
+
+                # No  need to reset again since vec_env resets individual envs automatically
+                if None not in steps_to_keep:
+                    # All envs have completed max_eps
+                    if eval_storage is not None:
+                        eval_storage.save(eval_log_file, f"step:{max_steps}\n", filetype='text', write_mode='a')
+                    break
+                steps += 1
+                # Get actions for all envs
+                action = self.model.select_action(obs, batched=True)
+
+                obses.append(obs)
+
+                obs, reward, terminated, truncated, info = eval_env.step(action)
+                dones = [x or y for (x,y) in zip(terminated, truncated)]
+        
+                for ide in range(eval_env.num_envs):
+                    if dones[ide]:
+                        num_eps[ide] += 1
+
+                    if num_eps[ide] >= self.num_eval_episodes:
+                        steps_to_keep[ide] = steps
+
+                episode_reward_list.append(reward)
+
+            episode_reward_list = np.array(episode_reward_list)
+
+            max_steps = episode_reward_list.shape[0]
+            mask = [np.pad(np.ones(n), (0, max_steps-n),mode='constant') for n in steps_to_keep]
+            mask = np.stack(mask, axis=1)
+            episode_reward_list *= mask
+
+            # Log video of evaluation observations
+            obses = np.stack(obses) # (steps, num_envs, *obs_shape)
+            # Stack frames horizontally; Stack episodes along batches
+            obses = rearrange(obses, 'b n (f c) h w -> b c (n h) (f w)', f=len(num_frames)) 
+
+            # Get average episode rewards across all environments
+            eval_info['episode_rewards_avg'] = episode_reward_list.sum(axis=0).mean()
+            eval_info['episode_rewards_std'] = episode_reward_list.sum(axis=0).std()
+            eval_info['episode_rewards'] = episode_reward_list
+            eval_info['episode_obs'] = obses        
+
             if eval_storage is not None:
-                eval_storage.save(eval_log_file, f"step:{i}\n", filetype='text', write_mode='a')
+                eval_storage.save(eval_output_file, eval_info, filetype='torch')
 
             if hasattr(self, 'progress_bar') and (env_name is not None):
-                self.progress_bar.update(self.progress_tasks[env_name], completed=i)
-
-            # No  need to reset again since vec_env resets individual envs automatically
-            if None not in steps_to_keep:
-                # All envs have completed max_eps
-                if eval_storage is not None:
-                    eval_storage.save(eval_log_file, f"step:{max_steps}\n", filetype='text', write_mode='a')
-                break
-            steps += 1
-            # Get actions for all envs
-            action = self.model.select_action(obs, batched=True)
-
-            obses.append(obs)
-
-            obs, reward, terminated, truncated, info = eval_env.step(action)
-            dones = [x or y for (x,y) in zip(terminated, truncated)]
-    
-            for ide in range(eval_env.num_envs):
-                if dones[ide]:
-                    num_eps[ide] += 1
-
-                if num_eps[ide] >= self.num_eval_episodes:
-                    steps_to_keep[ide] = steps
-
-            episode_reward_list.append(reward)
-
-        episode_reward_list = np.array(episode_reward_list)
-
-        max_steps = episode_reward_list.shape[0]
-        mask = [np.pad(np.ones(n), (0, max_steps-n),mode='constant') for n in steps_to_keep]
-        mask = np.stack(mask, axis=1)
-        episode_reward_list *= mask
-
-        # Log video of evaluation observations
-        obses = np.stack(obses) # (steps, num_envs, *obs_shape)
-        # Stack frames horizontally; Stack episodes along batches
-        obses = rearrange(obses, 'b n (f c) h w -> b c (n h) (f w)', f=len(num_frames)) 
-
-        # Get average episode rewards across all environments
-        eval_info['episode_rewards_avg'] = episode_reward_list.sum(axis=0).mean()
-        eval_info['episode_rewards_std'] = episode_reward_list.sum(axis=0).std()
-        eval_info['episode_obs'] = obses        
-
-        if eval_storage is not None:
-            eval_storage.save(eval_output_file, eval_info, filetype='torch')
-
-        if hasattr(self, 'progress_bar') and (env_name is not None):
-            # time.sleep(1)
-            self.progress_bar.update(self.progress_tasks[env_name], completed=max_steps)
-            time.sleep(1)
+                self.progress_bar.update(self.progress_tasks[env_name], completed=max_steps)
+                time.sleep(1)
 
         return eval_info
     

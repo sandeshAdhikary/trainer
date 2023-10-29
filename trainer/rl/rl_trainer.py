@@ -349,18 +349,8 @@ class RLTrainer(Trainer, ABC):
                 # Log progress
                 step = eval_job_log.split('\n')[-2].split('step:')[-1]
                 self.progress_eval.update(0, completed=float(step))
-            except FileNotFoundError:
-                eval_job_status = self.eval_job.poll()
-                if eval_job_status is None:
-                    # Eval job is still running, so skip
-                    pass
-                elif eval_job_status == 0:
-                    raise Exception("Eval job finished, but log file not found!")
-                else:
-                    # Write error file to storage
-                    err = self.eval_job.stderr.readlines()
-                    self.output_storage.save(f"eval_job_errs.txt", err, filetype='text', write_mode='w')
-                    raise Exception(f"Eval job failed with error. Check error log at {self.output_storage.storage_path('eval_job_errs.txt')}")
+            except FileNotFoundError as e:
+                pass
                     
         # Log eval metrics
         if len(self.eval_log) > 0:
