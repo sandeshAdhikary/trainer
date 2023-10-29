@@ -1,3 +1,4 @@
+import torch
 from abc import ABC, abstractmethod
 from typing import Dict
 from trainer.model import Model
