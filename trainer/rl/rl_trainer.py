@@ -275,7 +275,10 @@ class RLTrainer(Trainer, ABC):
 
         # Save checkpoint
         if (self.save_checkpoint_freq is not None) and (self.epoch % self.save_checkpoint_freq == 0) and (self.step > 0):
-            self._save_checkpoint()
+            self._save_checkpoint(ckpt_state_args={
+                'save_buffer':True,
+                'save_optimizers':True
+            })
             self.num_checkpoint_saves += 1
             self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint/num_checkpoint_saves': self.num_checkpoint_saves})
 
@@ -287,15 +290,20 @@ class RLTrainer(Trainer, ABC):
         Callbacks after training ends
         """
         self.log_train(info)
+        self._save_checkpoint(ckpt_state_args={
+            'save_buffer':False,
+            'save_optimizers':False
+        })
         # Replace existing checkpoint with final checkpoint (without buffer and optimizers)
-        self._save_checkpoint(chkpt_name='checkpoint', 
-                              log_checkpoint=self.config['log_checkpoint'], 
-                              save_buffer=False, save_optimizers=False,
-                              overwrite=True)
+        # self._save_checkpoint(chkpt_name='ckpt', 
+        #                       log_checkpoint=self.config['log_checkpoint'], 
+        #                       save_buffer=False, save_optimizers=False,
+        #                       overwrite=True)
+        # self._save_checkpoint()
         self.logger.finish()
 
 
-    def _load_checkpoint(self, chkpt_name='checkpoint', log_checkpoint=True):
+    def _load_checkpoint(self, chkpt_name='ckpt', log_checkpoint=True):
         try:
             # Restore checkpoint: model,trainer,replay_buffer
             ckpt = super()._load_checkpoint_dict(chkpt_name=chkpt_name,
