@@ -11,6 +11,7 @@ import shutil
 import zipfile
 import yaml
 from envyaml import EnvYAML
+import glob
 
 class Storage:
     """
@@ -99,10 +100,10 @@ class BaseStorage(ABC):
                 elif filetype == 'numpy':
                     outputs[filename] = np.load(os.path.join(tmp_dir, filename))
                 elif filetype == 'env_yaml':
-                    return EnvYAML(os.path.join(tmp_dir, filename))
+                    outputs[filename] = EnvYAML(os.path.join(tmp_dir, filename))
                 elif filetype == 'yaml':
                     with open(os.path.join(tmp_dir, filename), 'r') as f:
-                        return yaml.safe_load(f)
+                        outputs[filename] = yaml.safe_load(f)
                 else:
                     raise ValueError(f"Invalid filetype {filetype}")
         return outputs

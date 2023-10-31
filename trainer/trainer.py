@@ -324,6 +324,7 @@ class Trainer(ABC):
         if self.config['load_checkpoint_type'] == 'torch':
             ckpt = self.input_storage.load(f'model_{chkpt_name}.pt')
         elif self.config['load_checkpoint_type'] == 'zip':
+
             ckpt = self.input_storage.load_from_archive("ckpt.zip", 
                                                         filenames=filenames,
                                                         filetypes=filetypes)

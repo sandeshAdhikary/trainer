@@ -13,8 +13,10 @@ from copy import deepcopy
 from functools import partial
 from trainer.rl.rl_evaluator import TrainingRLEvaluator
 import subprocess
-from importlib import import_module
-
+import tempfile
+from glob import glob
+import os
+import torch
 class RLTrainer(Trainer, ABC):
 
     def setup_data(self, config: Dict):
@@ -30,6 +32,8 @@ class RLTrainer(Trainer, ABC):
             batch_size=config['batch_size'],
             device=self.device,
         )
+        # Max size of chunks when saving replay buffer
+        self.replay_buffer_chunk_len = 10_000
 
         # Set up other config
         self.num_eval_episodes = self.config.get('num_eval_episodes', 3)
@@ -107,9 +111,24 @@ class RLTrainer(Trainer, ABC):
         ckpt_state = super()._get_checkpoint_state(save_optimizers=save_optimizers)
         # Add buffer state to the checkpoint
         if save_buffer:
-            ckpt_state.update({
-                'replay_buffer': self.replay_buffer.state_dict()
-            })
+            buffer_state = self.replay_buffer.state_dict()
+            buffer_len = len(buffer_state['obses'])
+            buffer_no = 0
+            for idx in range(0, buffer_len, self.replay_buffer_chunk_len):
+                buffer_chunk = {k: v[idx:idx+self.replay_buffer_chunk_len] for k,v in buffer_state.items() if k != 'idx'}
+                ckpt_state.update({
+                    f'replay_buffer_{buffer_no}': buffer_chunk
+                })
+                buffer_no += 1
+            
+            # TODO: Split up replay buffer into chunks here?
+            # if 'buffer_' in self.replay_buffer.keys():
+            #   # Save buffer in chunks
+            # else:
+            # Just save the single buffer
+            # ckpt_state.update({
+            #     'replay_buffer': self.replay_buffer.state_dict()
+            # })
         return ckpt_state
 
     def setup_evaluator(self):
@@ -271,7 +290,7 @@ class RLTrainer(Trainer, ABC):
 
         # Log replay buffer size
         self.logger.log(log_dict={'trainer_step': self.step, 
-                                  'train/replay_buffer_size': self.replay_buffer.idx})
+                                  'train/replay_buffer_idx': self.replay_buffer.idx})
 
         # Save checkpoint
         if (self.save_checkpoint_freq is not None) and (self.epoch % self.save_checkpoint_freq == 0) and (self.step > 0):
@@ -294,32 +313,66 @@ class RLTrainer(Trainer, ABC):
             'save_buffer':False,
             'save_optimizers':False
         })
-        # Replace existing checkpoint with final checkpoint (without buffer and optimizers)
-        # self._save_checkpoint(chkpt_name='ckpt', 
-        #                       log_checkpoint=self.config['log_checkpoint'], 
-        #                       save_buffer=False, save_optimizers=False,
-        #                       overwrite=True)
-        # self._save_checkpoint()
         self.logger.finish()
 
 
     def _load_checkpoint(self, chkpt_name='ckpt', log_checkpoint=True):
         try:
             # Restore checkpoint: model,trainer,replay_buffer
-            ckpt = super()._load_checkpoint_dict(chkpt_name=chkpt_name,
-                                                 filenames=['model_ckpt.pt', 'trainer_ckpt.pt', 'replay_buffer_ckpt.pt'],
-                                                 filetypes=['torch', 'torch', 'torch']
-                                                 )
+            # ckpt = super()._load_checkpoint_dict(chkpt_name=chkpt_name,
+            #                                      filenames=['model_ckpt.pt', 'trainer_ckpt.pt', 'replay_buffer_ckpt.pt'],
+            #                                      filetypes=['torch', 'torch', 'torch']
+            #                                      )
+            # Download the checkpooint
+            ckpt = {}
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                self.input_storage.download('ckpt.zip', tmp_dir, extract_archives=True)
+                # Load train_ckpt
+                ckpt['trainer'] = torch.load(os.path.join(tmp_dir, 'trainer_ckpt.pt'))
+                ckpt['model'] = torch.load(os.path.join(tmp_dir, 'model_ckpt.pt'))
+                try:
+                    # Single replay buffer file
+                    ckpt['replay_buffer'] = torch.load(os.path.join(tmp_dir, 'replay_buffer_ckpt.pt'))
+                except FileNotFoundError:
+                    # Replay buffer is split into chunks
+                    buffer_files = sorted(glob(os.path.join(tmp_dir, 'replay_buffer_*_ckpt.pt')))
+                    buffer_ckpt = torch.load(buffer_files[0])
+                    for buffer_file in buffer_files[1:]:
+                        buffer_chunk = torch.load(buffer_file)
+                        for k in buffer_ckpt.keys():
+                                if isinstance(buffer_ckpt[k], torch.Tensor):
+                                    buffer_ckpt[k] = torch.cat([buffer_ckpt[k], buffer_chunk[k]], dim=0)
+                                elif isinstance(buffer_ckpt[k], np.ndarray):
+                                    buffer_ckpt[k] = np.concatenate([buffer_ckpt[k], buffer_chunk[k]], axis=0)
+                                else:
+                                    raise ValueError('Unknown buffer type')
+                    buffer_ckpt['idx'] = buffer_ckpt['obses'].shape[0]
+                    ckpt['replay_buffer'] = buffer_ckpt
+            # if filenames is None:
+            #     # Assume only model and trainer checkpoints
+            #     filenames = ['model_ckpt.pt', 'trainer_ckpt.pt']
+            # if filetypes is None:
+            #     # Assume all files are torch-loadable
+            #     filetypes = ['torch']*len(filenames)
+            # # Download checkpoint from logger
+            # if self.config['load_checkpoint_type'] == 'torch':
+            #     ckpt = self.input_storage.load(f'model_{chkpt_name}.pt')
+            # elif self.config['load_checkpoint_type'] == 'zip':
+            #     self.input_storage.download(archive_name, tmp_dir, extract_archives=True)
+            #     ckpt = self.input_storage.load_from_archive("ckpt.zip", 
+            #                                                 filenames=filenames,
+            #                                                 filetypes=filetypes)
+
+        # return ckpt
         except (UserWarning, Exception) as e:
             self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_load_error': 1})
             warn(f"Checkpoint load error: Could not load state dict. Error: {e.args}")
             return e
-
         # Update model, trainer and buffer
         try:
-            self.model.load_model(state_dict=ckpt['model_ckpt.pt'])
-            self.init_trainer_state(ckpt['trainer_ckpt.pt'])
-            self.replay_buffer.load_state_dict(ckpt['replay_buffer_ckpt.pt'])
+            self.model.load_model(state_dict=ckpt['model'])
+            self.init_trainer_state(ckpt['trainer'])
+            self.replay_buffer.load_state_dict(ckpt['replay_buffer'])
         except (UserWarning, Exception) as e:
             self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_load_error': 1})
             warn(f"Checkpoint load error: State dicts loaded, but could not update model, trainer or buffer. Error: {e.args}")
