@@ -115,12 +115,24 @@ class Logger(ABC):
     def log_video(self, key, frames, step, image_mode='hwc'):
         self._try_sw_log_video(key, frames, step, image_mode)
 
+    def get_log_data(self):
+        return self._try_sw_get_log_data()
+
     def finish(self, info: Dict = None):
         self._try_sw_finish(info)
 
     ########################################
     # Summary writer specific functions ####
     ########################################
+
+
+    def _try_sw_get_log_data(self):
+        if self.sw_type == 'wandb':
+            # Get a sampled history. Use run.scan_history() for full history
+            run = wandb.Api().run(f"{self.project}/{self.run_id}")
+            return run.history()
+        else:
+            raise NotImplementedError("Only wandb is supported for now")
 
     def _try_sw_finish(self, info):
         if self.sw_type == 'wandb':

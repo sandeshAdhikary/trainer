@@ -106,7 +106,7 @@ class RLTrainer(Trainer, ABC):
                 
         self.after_train() 
 
-    def _get_checkpoint_state(self, save_optimizers=True, save_buffer=True):
+    def _get_checkpoint_state(self, save_optimizers=True, save_buffer=True, save_logs=True):
         # Get ckpt state for trainer and model
         ckpt_state = super()._get_checkpoint_state(save_optimizers=save_optimizers)
         # Add buffer state to the checkpoint
@@ -121,14 +121,11 @@ class RLTrainer(Trainer, ABC):
                 })
                 buffer_no += 1
             
-            # TODO: Split up replay buffer into chunks here?
-            # if 'buffer_' in self.replay_buffer.keys():
-            #   # Save buffer in chunks
-            # else:
-            # Just save the single buffer
-            # ckpt_state.update({
-            #     'replay_buffer': self.replay_buffer.state_dict()
-            # })
+        if save_logs:
+            ckpt_state.update({
+                'logger':self.logger.get_log_data()
+                })
+            pass        
         return ckpt_state
 
     def setup_evaluator(self):
@@ -296,7 +293,8 @@ class RLTrainer(Trainer, ABC):
         if (self.save_checkpoint_freq is not None) and (self.epoch % self.save_checkpoint_freq == 0) and (self.step > 0):
             self._save_checkpoint(ckpt_state_args={
                 'save_buffer':True,
-                'save_optimizers':True
+                'save_optimizers':True,
+                'save_logs': True
             })
             self.num_checkpoint_saves += 1
             self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint/num_checkpoint_saves': self.num_checkpoint_saves})
@@ -309,9 +307,11 @@ class RLTrainer(Trainer, ABC):
         Callbacks after training ends
         """
         self.log_train(info)
+        # Final checkpoint: Remove buffer and optimizers to save storage
         self._save_checkpoint(ckpt_state_args={
             'save_buffer':False,
-            'save_optimizers':False
+            'save_optimizers':False,
+            'save_logs': True
         })
         self.logger.finish()
 
