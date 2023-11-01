@@ -318,12 +318,6 @@ class RLTrainer(Trainer, ABC):
 
     def _load_checkpoint(self, chkpt_name='ckpt', log_checkpoint=True):
         try:
-            # Restore checkpoint: model,trainer,replay_buffer
-            # ckpt = super()._load_checkpoint_dict(chkpt_name=chkpt_name,
-            #                                      filenames=['model_ckpt.pt', 'trainer_ckpt.pt', 'replay_buffer_ckpt.pt'],
-            #                                      filetypes=['torch', 'torch', 'torch']
-            #                                      )
-            # Download the checkpooint
             ckpt = {}
             with tempfile.TemporaryDirectory() as tmp_dir:
                 self.input_storage.download('ckpt.zip', tmp_dir, extract_archives=True)
@@ -348,26 +342,20 @@ class RLTrainer(Trainer, ABC):
                                     raise ValueError('Unknown buffer type')
                     buffer_ckpt['idx'] = buffer_ckpt['obses'].shape[0]
                     ckpt['replay_buffer'] = buffer_ckpt
-            # if filenames is None:
-            #     # Assume only model and trainer checkpoints
-            #     filenames = ['model_ckpt.pt', 'trainer_ckpt.pt']
-            # if filetypes is None:
-            #     # Assume all files are torch-loadable
-            #     filetypes = ['torch']*len(filenames)
-            # # Download checkpoint from logger
-            # if self.config['load_checkpoint_type'] == 'torch':
-            #     ckpt = self.input_storage.load(f'model_{chkpt_name}.pt')
-            # elif self.config['load_checkpoint_type'] == 'zip':
-            #     self.input_storage.download(archive_name, tmp_dir, extract_archives=True)
-            #     ckpt = self.input_storage.load_from_archive("ckpt.zip", 
-            #                                                 filenames=filenames,
-            #                                                 filetypes=filetypes)
 
         # return ckpt
-        except (UserWarning, Exception) as e:
-            self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_load_error': 1})
-            warn(f"Checkpoint load error: Could not load state dict. Error: {e.args}")
-            return e
+        except Exception as e:
+            if isinstance(e, (FileNotFoundError, FileExistsError)):
+                # Continue if file does not exist
+                self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_not_found_error': 1})
+                warn(f"Checkpoint load error: Could not find state dict. Error: {e.args}")
+                return e
+            else:
+                # If file exists but could not load, raise error
+                self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_log_error': 1})
+                self.logger.tag('ckpt_load_err')
+                raise e
+        
         # Update model, trainer and buffer
         try:
             self.model.load_model(state_dict=ckpt['model'])
@@ -375,8 +363,7 @@ class RLTrainer(Trainer, ABC):
             self.replay_buffer.load_state_dict(ckpt['replay_buffer'])
         except (UserWarning, Exception) as e:
             self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_load_error': 1})
-            warn(f"Checkpoint load error: State dicts loaded, but could not update model, trainer or buffer. Error: {e.args}")
-            return e
+            raise e
 
         if log_checkpoint:
             # Log the checkpoint load event
@@ -479,9 +466,3 @@ class RLTrainer(Trainer, ABC):
         self.num_model_updates = state_dict.get('num_model_updates', 0)
         self.num_checkpoint_saves = state_dict.get('num_checkpoint_saves', 0)
         self.num_checkpoint_loads = state_dict.get('num_checkpoint_loads', 0)
-
-
-        
-        
-
-

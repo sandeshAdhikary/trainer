@@ -95,6 +95,15 @@ class Logger(ABC):
             raise NotImplementedError("Only wandb is supported for now")
 
 
+    def tag(self, tag):
+        if self.sw_type == 'wandb':
+            # Tag the run as in progress
+            run = wandb.Api().run(f"{self.project}/{self.run_id}")
+            run.tags.append(tag)
+            run.update()
+        else:
+            raise NotImplementedError("Only wandb is supported for now")
+
     def parse_config(self, config):
         if isinstance(config.get('tags'), str):
             # if tags = '[this, that]' then make ['this', 'that']
