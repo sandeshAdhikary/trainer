@@ -294,7 +294,7 @@ class RLTrainer(Trainer, ABC):
             self._save_checkpoint(ckpt_state_args={
                 'save_buffer':True,
                 'save_optimizers':True,
-                'save_logs': True
+                'save_logs': False
             })
             self.num_checkpoint_saves += 1
             self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint/num_checkpoint_saves': self.num_checkpoint_saves})
@@ -311,7 +311,7 @@ class RLTrainer(Trainer, ABC):
         self._save_checkpoint(ckpt_state_args={
             'save_buffer':False,
             'save_optimizers':False,
-            'save_logs': True
+            'save_logs': False
         })
         self.logger.finish()
 
