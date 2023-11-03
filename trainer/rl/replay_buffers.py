@@ -36,6 +36,7 @@ class ReplayBuffer(object):
         self.idx = 0
         self.last_save = 0
         self.full = False
+        self.buffer_fill_level = 0
 
     def add(self, obs, action, curr_reward, reward, next_obs, done, info=None, batched=False):
         if batched:
@@ -61,6 +62,8 @@ class ReplayBuffer(object):
 
         self.idx = (self.idx + 1) % self.capacity
         self.full = self.full or self.idx == 0
+        if not self.full:
+            self.buffer_fill_level = self.idx
 
     def sample(self, k=False):
         idxs = np.random.randint(
@@ -92,17 +95,18 @@ class ReplayBuffer(object):
 
     def state_dict(self):
         state_dict = {
-            'obses': self.obses[:self.idx],
-            'next_obses': self.next_obses[:self.idx],
-            'actions': self.actions[:self.idx],
-            'rewards': self.rewards[:self.idx],
-            'curr_rewards': self.curr_rewards[:self.idx],
-            'not_dones': self.not_dones[:self.idx],
-            'idx': self.idx
+            'obses': self.obses[:self.buffer_fill_level],
+            'next_obses': self.next_obses[:self.buffer_fill_level],
+            'actions': self.actions[:self.buffer_fill_level],
+            'rewards': self.rewards[:self.buffer_fill_level],
+            'curr_rewards': self.curr_rewards[:self.buffer_fill_level],
+            'not_dones': self.not_dones[:self.buffer_fill_level],
+            'buffer_fill_level': self.buffer_fill_level,
+            'idx': self.idx,
         }
         if self.infos is not None:
             state_dict.update({
-                'infos': self.infos[:self.idx]
+                'infos': self.infos[:self.buffer_fill_level]
             })
         return state_dict
 
@@ -112,14 +116,15 @@ class ReplayBuffer(object):
         self.init_empty_buffer()
         # Load saved buffer
         self.idx = state_dict['idx']
-        self.obses[:self.idx] = state_dict['obses']
-        self.next_obses[:self.idx] = state_dict['next_obses']
-        self.actions[:self.idx] = state_dict['actions']
-        self.rewards[:self.idx] = state_dict['rewards']
-        self.curr_rewards[:self.idx] = state_dict['curr_rewards']
-        self.not_dones[:self.idx] = state_dict['not_dones']
+        self.buffer_fill_level = state_dict['buffer_fill_level']
+        self.obses[:self.buffer_fill_level] = state_dict['obses']
+        self.next_obses[:self.buffer_fill_level] = state_dict['next_obses']
+        self.actions[:self.buffer_fill_level] = state_dict['actions']
+        self.rewards[:self.buffer_fill_level] = state_dict['rewards']
+        self.curr_rewards[:self.buffer_fill_level] = state_dict['curr_rewards']
+        self.not_dones[:self.buffer_fill_level] = state_dict['not_dones']
         if self.infos is not None:
-            self.infos[:self.idx] = state_dict['infos']
+            self.infos[:self.buffer_fill_level] = state_dict['infos']
 
     def save(self, save_dir, save_chunks=False):
         if save_chunks:
@@ -150,40 +155,40 @@ class ReplayBuffer(object):
             # if self.infos is not None:
             #     self.infos[:self.idx] = payload[6]
                 
-    def _save_chunks(self, save_dir):
-        if self.idx == self.last_save:
-            return
-        path = os.path.join(save_dir, '%d_%d.pt' % (self.last_save, self.idx))
-        payload = [
-            self.obses[self.last_save:self.idx],
-            self.next_obses[self.last_save:self.idx],
-            self.actions[self.last_save:self.idx],
-            self.rewards[self.last_save:self.idx],
-            self.curr_rewards[self.last_save:self.idx],
-            self.not_dones[self.last_save:self.idx]
-        ]
-        if self.infos is not None:
-            # Add infos to payload
-            payload.append(self.infos[self.last_save:self.idx])
+    # def _save_chunks(self, save_dir):
+    #     if self.idx == self.last_save:
+    #         return
+    #     path = os.path.join(save_dir, '%d_%d.pt' % (self.last_save, self.idx))
+    #     payload = [
+    #         self.obses[self.last_save:self.idx],
+    #         self.next_obses[self.last_save:self.idx],
+    #         self.actions[self.last_save:self.idx],
+    #         self.rewards[self.last_save:self.idx],
+    #         self.curr_rewards[self.last_save:self.idx],
+    #         self.not_dones[self.last_save:self.idx]
+    #     ]
+    #     if self.infos is not None:
+    #         # Add infos to payload
+    #         payload.append(self.infos[self.last_save:self.idx])
 
-        self.last_save = self.idx
-        torch.save(payload, path)
+    #     self.last_save = self.idx
+    #     torch.save(payload, path)
 
-    def _load_chunks(self, save_dir):
-        chunks = os.listdir(save_dir)
-        chucks = sorted(chunks, key=lambda x: int(x.split('_')[0]))
-        self.last_save = int(chucks[-1].split('_')[1].split('.')[0]) # The last chunk's end index
-        for chunk in chucks:
-            start, end = [int(x) for x in chunk.split('.')[0].split('_')]
-            path = os.path.join(save_dir, chunk)
-            payload = torch.load(path)
-            assert self.idx == start
-            self.obses[start:end] = payload[0]
-            self.next_obses[start:end] = payload[1]
-            self.actions[start:end] = payload[2]
-            self.rewards[start:end] = payload[3]
-            self.curr_rewards[start:end] = payload[4]
-            self.not_dones[start:end] = payload[5]
-            if self.infos is not None:
-                self.infos[start:end] = payload[6]
-            self.idx = end
+    # def _load_chunks(self, save_dir):
+    #     chunks = os.listdir(save_dir)
+    #     chucks = sorted(chunks, key=lambda x: int(x.split('_')[0]))
+    #     self.last_save = int(chucks[-1].split('_')[1].split('.')[0]) # The last chunk's end index
+    #     for chunk in chucks:
+    #         start, end = [int(x) for x in chunk.split('.')[0].split('_')]
+    #         path = os.path.join(save_dir, chunk)
+    #         payload = torch.load(path)
+    #         assert self.idx == start
+    #         self.obses[start:end] = payload[0]
+    #         self.next_obses[start:end] = payload[1]
+    #         self.actions[start:end] = payload[2]
+    #         self.rewards[start:end] = payload[3]
+    #         self.curr_rewards[start:end] = payload[4]
+    #         self.not_dones[start:end] = payload[5]
+    #         if self.infos is not None:
+    #             self.infos[start:end] = payload[6]
+    #         self.idx = end

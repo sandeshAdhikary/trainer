@@ -33,7 +33,8 @@ class RLTrainer(Trainer, ABC):
             device=self.device,
         )
         # Max size of chunks when saving replay buffer
-        self.replay_buffer_chunk_len = 10_000
+        self.replay_buffer_chunk_len = 50_000
+        # assert self.replay_buffer_chunk_len < self.save_checkpoint_freq # Otherwise, replay buffer will not be saved
 
         # Set up other config
         self.num_eval_episodes = self.config.get('num_eval_episodes', 3)
@@ -104,7 +105,7 @@ class RLTrainer(Trainer, ABC):
                     self.evaluate(async_eval=self.async_eval)
                 self.after_epoch({'rollout': rollout_data, 'num_model_updates': num_updates})
                 
-        self.after_train() 
+            self.after_train() 
 
     def _get_checkpoint_state(self, save_optimizers=True, save_buffer=True, save_logs=True):
         # Get ckpt state for trainer and model
@@ -112,10 +113,12 @@ class RLTrainer(Trainer, ABC):
         # Add buffer state to the checkpoint
         if save_buffer:
             buffer_state = self.replay_buffer.state_dict()
-            buffer_len = len(buffer_state['obses'])
+            buffer_len = buffer_state['obses'].shape[0]
             buffer_no = 0
             for idx in range(0, buffer_len, self.replay_buffer_chunk_len):
-                buffer_chunk = {k: v[idx:idx+self.replay_buffer_chunk_len] for k,v in buffer_state.items() if k != 'idx'}
+                buffer_chunk = {k: v[idx:idx+self.replay_buffer_chunk_len] for k,v in buffer_state.items() if k not in ['idx', 'buffer_fill_level']}
+                buffer_chunk['idx'] = buffer_state['idx']
+                buffer_chunk['buffer_fill_level'] = buffer_state['buffer_fill_level']
                 ckpt_state.update({
                     f'replay_buffer_{buffer_no}': buffer_chunk
                 })
@@ -321,37 +324,40 @@ class RLTrainer(Trainer, ABC):
             ckpt = {}
             with tempfile.TemporaryDirectory() as tmp_dir:
                 self.input_storage.download('ckpt.zip', tmp_dir, extract_archives=True)
-                # Load train_ckpt
+                # # Load train_ckpt
                 ckpt['trainer'] = torch.load(os.path.join(tmp_dir, 'trainer_ckpt.pt'))
                 ckpt['model'] = torch.load(os.path.join(tmp_dir, 'model_ckpt.pt'))
                 try:
                     # Single replay buffer file
                     ckpt['replay_buffer'] = torch.load(os.path.join(tmp_dir, 'replay_buffer_ckpt.pt'))
-                except FileNotFoundError:
-                    # Replay buffer is split into chunks
-                    buffer_files = sorted(glob(os.path.join(tmp_dir, 'replay_buffer_*_ckpt.pt')))
-                    buffer_ckpt = torch.load(buffer_files[0])
-                    for buffer_file in buffer_files[1:]:
-                        buffer_chunk = torch.load(buffer_file)
-                        for k in buffer_ckpt.keys():
-                                if isinstance(buffer_ckpt[k], torch.Tensor):
-                                    buffer_ckpt[k] = torch.cat([buffer_ckpt[k], buffer_chunk[k]], dim=0)
-                                elif isinstance(buffer_ckpt[k], np.ndarray):
-                                    buffer_ckpt[k] = np.concatenate([buffer_ckpt[k], buffer_chunk[k]], axis=0)
-                                else:
-                                    raise ValueError('Unknown buffer type')
-                    buffer_ckpt['idx'] = buffer_ckpt['obses'].shape[0]
-                    ckpt['replay_buffer'] = buffer_ckpt
+                except FileNotFoundError as e:
+                    try:
+                        # Replay buffer is split into chunks
+                        buffer_files = sorted(glob(os.path.join(tmp_dir, 'replay_buffer_*_ckpt.pt')))
+                        buffer_ckpt = torch.load(buffer_files[0])
+                        if len(buffer_files) > 1:
+                            for buffer_file in buffer_files[1:]:
+                                buffer_chunk = torch.load(buffer_file)
+                                for k in buffer_ckpt.keys():
+                                        if isinstance(buffer_ckpt[k], torch.Tensor):
+                                            buffer_ckpt[k] = torch.cat([buffer_ckpt[k], buffer_chunk[k]], dim=0)
+                                        elif isinstance(buffer_ckpt[k], np.ndarray):
+                                            buffer_ckpt[k] = np.concatenate([buffer_ckpt[k], buffer_chunk[k]], axis=0)
+                                        else:
+                                            raise ValueError('Unknown buffer type')
+                        buffer_ckpt['idx'] = buffer_ckpt['idx']
+                        buffer_ckpt['buffer_fill_level'] = buffer_ckpt['buffer_fill_level']
+                        ckpt['replay_buffer'] = buffer_ckpt
+                    except Exception as e:
+                        raise ValueError("Could not Load Existing Replay Buffer")
 
         # return ckpt
         except Exception as e:
-            if isinstance(e, (FileNotFoundError, FileExistsError)):
-                # Continue if file does not exist
-                self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_not_found_error': 1})
-                warn(f"Checkpoint load error: Could not find state dict. Error: {e.args}")
+            if isinstance(e, FileNotFoundError):
+                # Checkpoint cannnot have been created yet; so don't raise error
                 return e
             else:
-                # If file exists but could not load, raise error
+                # Something went wrong with loading existing checkpoint; raise error
                 self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_log_error': 1})
                 self.logger.tag('ckpt_load_err')
                 raise e
@@ -365,9 +371,9 @@ class RLTrainer(Trainer, ABC):
             self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_load_error': 1})
             raise e
 
+        self.num_checkpoint_loads += 1
         if log_checkpoint:
             # Log the checkpoint load event
-            self.num_checkpoint_loads += 1
             self.logger.log(key='checkpoint/num_checkpoint_loads', value=self.num_checkpoint_loads, step=self.logger._sw.step)
 
     def log_step(self, info=None):
