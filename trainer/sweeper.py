@@ -80,22 +80,28 @@ class WandBSweeper():
         """
 
         assert self.default_params is not None, "Default params not set. Run set_default_params() first."
-        
-        if self.sweep_exists():
-            print(f"Loading sweep {self.sweep_name} from project {self.project}")
-            print(f"Waiting for heartbeat timeout for {self.heartbeat_timeout} seconds...")
-            sleep(self.heartbeat_timeout)
-            self.sweep_id = self.project_sweeps_dict()[self.sweep_name]['id']
-            if self.config['load_runs_from_queue']:
-                self.run_from_queue()                    
-        else:
-            print(f"Creating new sweep {self.sweep_name} in project {self.project}")
-            self.sweep_id = self.make_wandb_sweep()
-        
-        wandb.agent(self.sweep_id, 
-                    function=partial(self.objective), 
-                    count=count, 
-                    project=self.project)
+        num_attempts = 0
+        try:        
+            if self.sweep_exists():
+                print(f"Loading sweep {self.sweep_name} from project {self.project}")
+                print(f"Waiting for heartbeat timeout for {self.heartbeat_timeout} seconds...")
+                sleep(self.heartbeat_timeout)
+                self.sweep_id = self.project_sweeps_dict()[self.sweep_name]['id']
+                if self.config['load_runs_from_queue']:
+                    self.run_from_queue()                    
+            else:
+                print(f"Creating new sweep {self.sweep_name} in project {self.project}")
+                self.sweep_id = self.make_wandb_sweep()
+            wandb.agent(self.sweep_id, 
+                        function=partial(self.objective), 
+                        count=count, 
+                        project=self.project)
+        except BrokenPipeError:
+            # If connection to wandb server gets broken, try again a few times
+            if num_attempts > 3:
+                raise BrokenPipeError
+            num_attempts += 1
+
 
 
     def objective(self, run_id=None):
