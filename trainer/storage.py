@@ -158,7 +158,12 @@ class LocalFileSystemStorage(BaseStorage):
         if self.sub_dir:
             # /root/project/run/sub_dir
             self.dir = os.path.join(self.dir, self.sub_dir)
-            
+        
+        if config.get('overwrite', False):
+            if os.path.exists(self.dir):
+                # Delete existing directory
+                shutil.rmtree(self.dir)
+        
         os.makedirs(self.dir, exist_ok=True)
 
     def save(self, filename, data, filetype, write_mode='w'):
@@ -239,6 +244,12 @@ class LocalFileSystemStorage(BaseStorage):
     def upload(self, directory=None, files=None, new_dir=None):
         # Copy a directory or file to storage
         raise NotImplementedError
+    
+    def get_filenames(self):
+        """
+        Return a list of filenames in the directory
+        """
+        return glob.glob(self.dir)
 
 class SSHFileSystemStorage(BaseStorage):
     """
@@ -254,12 +265,10 @@ class SSHFileSystemStorage(BaseStorage):
                                 username=config['username'], 
                                 password=config['password'])
 
-        # Check the SSH connection
-        ssh_active = self.connection.get_transport().is_active()
-        assert ssh_active, "Could not establish SSH connection"
-
         self.root_dir = config['root_dir']
         self.sub_dir = config.get('sub_dir')
+
+        assert self.connection_active(), "Could not establish SSH connection"
 
         # /root/project/sweep/run or /root/project/run
         if self.sweep is None:
@@ -272,7 +281,11 @@ class SSHFileSystemStorage(BaseStorage):
             self.dir = os.path.join(self.dir, self.sub_dir)
     
             
-        self.makedirs(self.dir)
+        self.makedirs(self.dir, config.get('overwrite', False))
+
+    def connection_active(self):
+        return self.connection.get_transport().is_active()
+        
 
     def save(self, filename, data, filetype, write_mode='w'):
         """
@@ -313,7 +326,7 @@ class SSHFileSystemStorage(BaseStorage):
         """
         return os.path.join(self.dir, filename)
 
-    def makedirs(self, directory):
+    def makedirs(self, directory, overwrite=False):
         """
         If dir does not exist, create it
         creates dirs recursively e.g. if directory='a/b/c' and 
@@ -321,12 +334,22 @@ class SSHFileSystemStorage(BaseStorage):
         """
         # dir_exists = self.connection.run(f'cd {dir}', warn=True, hide=True)
         _, stdout, stderr = self.connection.exec_command(f'cd {directory}')
+        if overwrite:
+            if stdout.channel.recv_exit_status() == 0:
+                # Delete existing directory
+                _, stdout, stderr = self.connection.exec_command(f'rm -r {directory}')
+                if stdout.channel.recv_exit_status() != 0:
+                    raise ValueError(f"Could not delete directory {directory}. Error: {stderr.readlines()}")
+        else:
+            if stdout.channel.recv_exit_status() == 0:
+                # Directory already exists, so exit
+                return 0
+            
+        # Create directory
+        _, stdout, stderr = self.connection.exec_command(f'mkdir -p {directory}')
         if stdout.channel.recv_exit_status() != 0:
-            # Create folder if it does not exist
-            _, stdout, stderr = self.connection.exec_command(f'mkdir -p {directory}')
-            if stdout.channel.recv_exit_status() != 0:
-                # Could not create directory
-                raise ValueError(f"Could not create directory {directory}. Error: {stderr.readlines()}")
+            # Could not create directory
+            raise ValueError(f"Could not create directory {directory}. Error: {stderr.readlines()}")
 
     def delete(self, directory=None, files=None):
         """
@@ -376,6 +399,14 @@ class SSHFileSystemStorage(BaseStorage):
         else:
             raise NotImplementedError
         
+
+    def get_filenames(self):
+        """
+        Return a list of filenames in the directory
+        """
+        _, stdout, stderr =  self.connection.exec_command(f'ls {self.dir}')
+        return stdout.readlines()
+
 
 class DBStorage(BaseStorage):
     """

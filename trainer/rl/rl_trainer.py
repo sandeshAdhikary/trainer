@@ -17,6 +17,7 @@ import tempfile
 from glob import glob
 import os
 import torch
+
 class RLTrainer(Trainer, ABC):
 
     def setup_data(self, config: Dict):
@@ -33,7 +34,7 @@ class RLTrainer(Trainer, ABC):
             device=self.device,
         )
         # Max size of chunks when saving replay buffer
-        self.replay_buffer_chunk_len = 50_000
+        self.replay_buffer_chunk_len = config.get('buffer_chunk_len', 10_000)
         # assert self.replay_buffer_chunk_len < self.save_checkpoint_freq # Otherwise, replay buffer will not be saved
 
         # Set up other config
@@ -343,10 +344,10 @@ class RLTrainer(Trainer, ABC):
                                             buffer_ckpt[k] = torch.cat([buffer_ckpt[k], buffer_chunk[k]], dim=0)
                                         elif isinstance(buffer_ckpt[k], np.ndarray):
                                             buffer_ckpt[k] = np.concatenate([buffer_ckpt[k], buffer_chunk[k]], axis=0)
+                                        elif isinstance(buffer_ckpt[k], (int, float, str)):
+                                            pass
                                         else:
                                             raise ValueError('Unknown buffer type')
-                        buffer_ckpt['idx'] = buffer_ckpt['idx']
-                        buffer_ckpt['buffer_fill_level'] = buffer_ckpt['buffer_fill_level']
                         ckpt['replay_buffer'] = buffer_ckpt
                     except Exception as e:
                         raise ValueError("Could not Load Existing Replay Buffer")
@@ -472,3 +473,9 @@ class RLTrainer(Trainer, ABC):
         self.num_model_updates = state_dict.get('num_model_updates', 0)
         self.num_checkpoint_saves = state_dict.get('num_checkpoint_saves', 0)
         self.num_checkpoint_loads = state_dict.get('num_checkpoint_loads', 0)
+
+
+        
+        
+
+

@@ -2,6 +2,7 @@ from abc import ABC
 from typing import Dict, Union
 from types import SimpleNamespace
 import torch
+from copy import deepcopy
 # from trainer.utils import register_class
 
 class Model(ABC):
@@ -57,7 +58,3 @@ class Model(ABC):
     @property
     def module_path(self):
         return None
-
-    # def _register_model(self):
-    #     if self.module_path is not None:
-    #         register_class('model', self.__class__.__name__, self.module_path)
