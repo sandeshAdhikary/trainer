@@ -1,0 +1,7 @@
+evaluator:
+  BisimRLEvaluator: src.experiments.cartpole.multi_env_eval
+  TrainingRLEvaluator: trainer.rl.rl_evaluator
+model:
+  SimpleMLModel: trainer.tests.ml_trainer
+trainer:
+  MLTrainer: trainer.tests.ml_trainer
