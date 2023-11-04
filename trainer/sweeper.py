@@ -64,6 +64,9 @@ class WandBSweeper():
                     run_queue.append(run.id)
                 
             if len(run_queue) > 0:
+                # Allow enough time so run can be picked up
+                print(f"Waiting for heartbeat timeout for {self.heartbeat_timeout} seconds...")
+                sleep(self.heartbeat_timeout)
                 # Execute first run in the queue
                 self.objective(run_queue[0])
                 # Allow enough time so run can be picked up
@@ -92,6 +95,10 @@ class WandBSweeper():
             else:
                 print(f"Creating new sweep {self.sweep_name} in project {self.project}")
                 self.sweep_id = self.make_wandb_sweep()
+
+            print(f"Waiting for heartbeat timeout for {self.heartbeat_timeout} seconds...")
+            sleep(self.heartbeat_timeout)
+
             wandb.agent(self.sweep_id, 
                         function=partial(self.objective), 
                         count=count, 
@@ -136,6 +143,7 @@ class WandBSweeper():
         trainer.set_logger(logger)
         # Train
         trainer.fit()
+        print('Done')
 
     def project_sweeps_dict(self):
         project = wandb.Api().project(self.project)

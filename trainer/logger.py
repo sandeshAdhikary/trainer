@@ -146,27 +146,25 @@ class Logger(ABC):
     def _try_sw_finish(self, info):
         if self.sw_type == 'wandb':
             # Tag the run as completed
-            run = wandb.Api().run(f"{self.project}/{self.run_id}")
+            api = wandb.Api()
+            run = api.run(f"{self.project}/{self.run_id}")
             if (run.tags is not None) and ('InProgress' in run.tags):
                 run.tags.remove('InProgress')
             run.tags.append('Complete')
             run.update()
 
-            # Replace checkpoint.zip with final checkpoint
-
-
-            wandb.finish()
-            command = f'wandb sync {self.logdir} --id {self.run_id} -p {self.project}'
-            sync_process = subprocess.Popen(
-                command,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True  # Enable text mode (for string output)
-            )
-            sync_process.wait()
-            if self.config['cleanup'] and sync_process.poll() == 0:
-                    shutil.rmtree(os.path.dirname(self.logdir))
+            # command = f'wandb sync {self.logdir} --id {self.run_id} -p {self.project}'
+            # sync_process = subprocess.Popen(
+            #     command,
+            #     shell=True,
+            #     stdout=subprocess.PIPE,
+            #     stderr=subprocess.PIPE,
+            #     universal_newlines=True  # Enable text mode (for string output)
+            # )
+            # sync_process.wait()
+            # wandb.finish()
+            # if self.config['cleanup']:
+                    # shutil.rmtree(os.path.dirname(self.logdir))
         else:
             raise NotImplementedError("Only wandb is supported for now")
 

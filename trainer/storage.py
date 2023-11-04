@@ -12,6 +12,7 @@ import zipfile
 import yaml
 from envyaml import EnvYAML
 import glob
+import io
 
 class Storage:
     """
@@ -72,6 +73,12 @@ class BaseStorage(ABC):
             elif filetype == 'yaml':
                 with open(os.path.join(tmp_dir, filename), 'r') as f:
                     return yaml.safe_load(f)
+            elif filetype == 'bytesio':
+                with open(os.path.join(tmp_dir, filename), 'rb') as f:
+                    return io.BytesIO(f.read())
+            elif filetype == 'mp4':
+                import skvideo.io
+                return skvideo.io.vread(os.path.join(tmp_dir, filename))  
             else:
                 raise ValueError(f"Invalid filetype {filetype}")
 
@@ -104,9 +111,17 @@ class BaseStorage(ABC):
                 elif filetype == 'yaml':
                     with open(os.path.join(tmp_dir, filename), 'r') as f:
                         outputs[filename] = yaml.safe_load(f)
+                elif filetype == 'mp4':
+                    import skvideo.io
+                    outputs[filename] = skvideo.io.vread(os.path.join(tmp_dir, filename))  
+                elif filetype == 'bytesio':
+                    with open(os.path.join(tmp_dir, filename), 'rb') as f:
+                         outputs[filename] = io.BytesIO(f.read())
                 else:
                     raise ValueError(f"Invalid filetype {filetype}")
         return outputs
+
+
 
 class WandbStorage(BaseStorage):
     """"
@@ -250,6 +265,32 @@ class LocalFileSystemStorage(BaseStorage):
         Return a list of filenames in the directory
         """
         return glob.glob(self.dir)
+
+    def archive_filenames(self, archive_name):
+        try:
+            with zipfile.ZipFile(self.storage_path(archive_name), 'r') as zip_file:
+                return zip_file.namelist()
+        except:
+            return None
+        
+
+    def copy(self, file_or_dir, new_dir=None, mode='file'):
+        """
+        Copy file_or_dir to new_dir
+        """
+        if new_dir is None:
+            new_dir = self.dir
+
+        if mode == 'dir':
+            # Copy a directory
+            shutil.copytree(self.storage_path(file_or_dir), self.storage_path(new_dir))
+        elif mode == 'file':
+            # Copy a file
+            new_file = os.path.join(new_dir, os.path.basename(file_or_dir))
+            shutil.copy(self.storage_path(file_or_dir), self.storage_path(new_file))
+        else:
+            raise ValueError(f"Invalid mode {mode}")
+
 
 class SSHFileSystemStorage(BaseStorage):
     """
@@ -405,7 +446,40 @@ class SSHFileSystemStorage(BaseStorage):
         Return a list of filenames in the directory
         """
         _, stdout, stderr =  self.connection.exec_command(f'ls {self.dir}')
-        return stdout.readlines()
+        filenames = stdout.readlines()
+        filenames = [s.strip('\n') for s in filenames]
+        return filenames
+    
+    def copy(self, file_or_dir, new_file_or_dir=None, mode='file'):
+        """
+        Copy file_or_dir to new_dir
+        """
+        if mode == 'file':
+            old_file = file_or_dir
+            new_file_name = new_file_or_dir
+            if new_file_name is None:
+                new_file_name, extension = os.path.basename(old_file).split('.')
+                new_file_name = f"{new_file_name}_copy.{extension}"
+            # Copy a file
+            self.connection.exec_command(f'cp {self.storage_path(old_file)} {self.storage_path(new_file_name)}')
+        elif mode == 'dir':
+            raise NotImplementedError
+        else:
+            raise ValueError("mode must be 'dir' or 'file'")
+        
+    def archive_filenames(self, archive_name):
+        _, stdout, stderr =  self.connection.exec_command(f"unzip -l {self.storage_path(archive_name)}")
+        err = stderr.readlines()
+        if len(err) > 0:
+            # Could not unzip
+            return None
+        filenames = stdout.readlines()
+        filenames = [x.split('\n')[0].split(' ')[-1] for x in filenames]
+        filenames = filenames[3:-2]
+        if len(filenames) < 1:
+            # There were no files
+            filenames = None
+        return filenames
 
 
 class DBStorage(BaseStorage):

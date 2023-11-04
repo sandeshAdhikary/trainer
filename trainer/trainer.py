@@ -338,10 +338,30 @@ class Trainer(ABC):
         """
         # Create an archive of the checkpoint files
         self._create_checkpoint_files(archive=True, ckpt_state_args=ckpt_state_args)
+
+        # Check if zip file was created properly
+        if self.tmp_storage.archive_filenames('ckpt.zip') is None:
+            warn("Checkpoint zip file was not created properly (in tmp storage). Checkpoint not saved in output storage.")
+            self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_save_error': 1})
+            return None
+
         if save_to_output_storage:
+            # First make a backup copy of the checkpoint
+            if 'ckpt.zip' in self.output_storage.get_filenames():
+                self.output_storage.copy('ckpt.zip', 'ckpt_backup.zip')
+
             # Save checkpoint to output storage
             self.output_storage.upload(files=self.tmp_storage.storage_path('ckpt.zip'))
-            # self.output_storage.upload(files=tmp_ckpt_path)
+            # Check if the new ckpt was created successfully
+            if self.output_storage.archive_filenames('ckpt.zip') is None:
+                warn("The ckpt.zip file was not uploaded properly (to output storage). Reverting to ckpt_backup.zip")
+                # Replace 'ckpt.zip' with the backup
+                self.output_storage.copy('ckpt_backup.zip', 'ckpt.zip')
+                self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_save_error': 1})
+            else:
+                # No errors in the new checkpoint, replace existing backup
+                self.output_storage.copy('ckpt.zip', 'ckpt_backup.zip')
+
         if log_checkpoint:
             # Save checkpoint to logger (e.g. wandb)
             self.logger.log_checkpoint(filepath=self.tmp_storage.storage_path('ckpt.zip'))
