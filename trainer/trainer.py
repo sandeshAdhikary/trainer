@@ -347,20 +347,23 @@ class Trainer(ABC):
 
         if save_to_output_storage:
             # First make a backup copy of the checkpoint
-            if 'ckpt.zip' in self.output_storage.get_filenames():
-                self.output_storage.copy('ckpt.zip', 'ckpt_backup.zip')
+            # if 'ckpt.zip' in self.output_storage.get_filenames():
+            #     self.output_storage.copy('ckpt.zip', 'ckpt_backup.zip')
 
-            # Save checkpoint to output storage
-            self.output_storage.upload(files=self.tmp_storage.storage_path('ckpt.zip'))
-            # Check if the new ckpt was created successfully
-            if self.output_storage.archive_filenames('ckpt.zip') is None:
-                warn("The ckpt.zip file was not uploaded properly (to output storage). Reverting to ckpt_backup.zip")
+            # upload checkpoint to output storage as a temp file
+            self.output_storage.upload(files=self.tmp_storage.storage_path('ckpt.zip'), new_dir='ckpt_temp')
+            # Check if the new temp ckpt was created successfully
+            if self.output_storage.archive_filenames('ckpt_temp/ckpt.zip') is None:
+                # warn("The ckpt_temp.zip file was not uploaded properly (to output storage)")
                 # Replace 'ckpt.zip' with the backup
-                self.output_storage.copy('ckpt_backup.zip', 'ckpt.zip')
+                # self.output_storage.copy('ckpt_backup.zip', 'ckpt.zip')
                 self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_save_error': 1})
+                raise Exception("The ckpt_temp.zip file was not uploaded properly (to output storage)")
             else:
                 # No errors in the new checkpoint, replace existing backup
-                self.output_storage.copy('ckpt.zip', 'ckpt_backup.zip')
+                self.output_storage.copy('ckpt_temp/ckpt.zip', 'ckpt.zip')
+                # Delete the temp file
+                self.output_storage.delete(directory='ckpt_temp')
 
         if log_checkpoint:
             # Save checkpoint to logger (e.g. wandb)

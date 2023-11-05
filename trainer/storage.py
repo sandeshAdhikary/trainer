@@ -398,20 +398,19 @@ class SSHFileSystemStorage(BaseStorage):
         """
         if directory is not None:
             # Delete specific folder
-            raise NotImplementedError
+            _, stdout, stderr = self.connection.exec_command(f'rm -r {self.storage_path(directory)}')
+            if stdout.channel.recv_exit_status() != 0:
+                # Could not delete directory
+                raise ValueError(f"Could not delete directory {self.dir}. Error: {stderr.readlines()}")
         elif files is not None:
             # Delete files in the list
             raise NotImplementedError
         else:
-            # Delete the entire storage directory
-            _, stdout, stderr = self.connection.exec_command(f'cd {self.dir}')
+            # TODO: rm -rf could be risky. Safer way?
+            _, stdout, stderr = self.connection.exec_command(f'rm -r {self.dir}')
             if stdout.channel.recv_exit_status() != 0:
-                # Create folder if it does not exist
-                # TODO: rm -rf could be risky. Safer way?
-                _, stdout, stderr = self.connection.exec_command(f'rm -rf {self.dir}')
-                if stdout.channel.recv_exit_status() != 0:
-                    # Could not create directory
-                    raise ValueError(f"Could not delete directory {self.dir}. Error: {stderr.readlines()}")
+                # Could not delete directory
+                raise ValueError(f"Could not delete directory {self.dir}. Error: {stderr.readlines()}")
         
     def make_archive(self, files):
         """

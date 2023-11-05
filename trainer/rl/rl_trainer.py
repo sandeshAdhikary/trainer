@@ -355,11 +355,11 @@ class RLTrainer(Trainer, ABC):
         # return ckpt
         except Exception as e:
             if isinstance(e, FileNotFoundError):
-                # Checkpoint cannnot have been created yet; so don't raise error
+                # Checkpoint may not have been created yet; so don't raise error
                 return e
             else:
                 # Something went wrong with loading existing checkpoint; raise error
-                self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_log_error': 1})
+                self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_load_error': 1})
                 self.logger.tag('ckpt_load_err')
                 raise e
         
