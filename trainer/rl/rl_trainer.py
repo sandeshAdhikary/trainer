@@ -17,8 +17,17 @@ import tempfile
 from glob import glob
 import os
 import torch
+from importlib import import_module
+from trainer import Model, Logger
+from trainer.utils import import_module_attr
 
 class RLTrainer(Trainer, ABC):
+
+    def __init__(self, config: Dict, model: Model = None, logger: Logger = None) -> None:
+        # Load the make_env function
+        self.make_env = import_module_attr( config['make_env_module_path'])
+        super().__init__(config, model, logger)
+
 
     def setup_data(self, config: Dict):
         # Setup the environment
@@ -63,12 +72,7 @@ class RLTrainer(Trainer, ABC):
             self.terminal_display = Live(self._term_layout, 
                                         screen=False, 
                                         refresh_per_second=config.get('terminal_refresh_rate', 1))
-
-
-    @abstractmethod
-    def make_env(self, args):
-        raise NotImplementedError
-
+            
     def env_fns(self, config):
         """
         config: config dict defining the envs
@@ -310,6 +314,10 @@ class RLTrainer(Trainer, ABC):
         """
         Callbacks after training ends
         """
+        if self.async_eval:
+            # Finish up any eval jobs that are still running
+            self._wait_for_eval_job() 
+
         self.log_train(info)
         # Final checkpoint: Remove buffer and optimizers to save storage
         self._save_checkpoint(ckpt_state_args={
@@ -317,6 +325,7 @@ class RLTrainer(Trainer, ABC):
             'save_optimizers':False,
             'save_logs': False
         })
+
         self.logger.finish()
 
 
@@ -411,8 +420,8 @@ class RLTrainer(Trainer, ABC):
         if len(self.eval_log) > 0:
             last_item = self.eval_log[-1]
             self.logger.log(log_dict={'eval_step': int(last_item['step']),
-                                      'eval/episode_reward_avg': float(last_item['log']['episode_rewards_avg']),
-                                      'eval/episode_reward_std': float(last_item['log']['episode_rewards_std'])}
+                                      'eval/episode_reward_avg': float(last_item['log']['avg_episode_rewards']['avg']),
+                                      'eval/episode_reward_std': float(last_item['log']['avg_episode_rewards']['std'])}
                                       )
 
     def log_train(self, info=None):
