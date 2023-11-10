@@ -8,16 +8,6 @@ from trainer.utils import pretty_title, COLORS
 from trainer.study import Study
 from trainer.app import app_utils
 
-os.environ['PROJECT_DIR'] = "/project"
-os.environ['LOG_DIR'] = "/project/logdir"
-os.environ['SSH_DIR'] = "/home/sandesh/studies"
-os.environ['SSH_HOST'] = "10.19.137.42"
-os.environ['SSH_USERNAME'] = "sandesh"
-os.environ['SSH_PASSWORD'] = "letmein"
-os.environ['MYSQL_HOST'] = "10.19.137.42"
-os.environ['MYSQL_USERNAME'] = "sandesh"
-os.environ['MYSQL_PASSWORD'] = "letmein"
-
 if __name__ == "__main__":
     st.set_page_config(layout="wide") 
     with st.sidebar:
