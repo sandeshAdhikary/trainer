@@ -15,7 +15,7 @@ import mysql.connector
 import os
 import json
 import hashlib
-from src.studies.metrics import Metric, EpisodeRewards, AvgEpisodeReward, ObservationVideos
+from trainer.metrics import Metric, EpisodeRewards, AvgEpisodeReward, ObservationVideos
 
 class RLEvaluator(Evaluator, ABC):
     
