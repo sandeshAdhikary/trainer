@@ -10,6 +10,20 @@ import collections
 from importlib import import_module
 
 CLASS_TYPES = ['trainer', 'model', 'evaluator']
+COLORS = {
+   'tableau10': ["#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", 
+              "#EDC949", "#AF7AA1", "#FF9DA7", "#9C755F", "#BAB0AB"],
+    'tableau20': ["#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", 
+              "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF", 
+              "#AEC7E8", "#FFBC79", "#98DF8A", "#FF9896", "#C5B0D5", 
+              "#C49C94", "#F7B6D2", "#C7C7C7", "#DBDB8D", "#9EDAE5"]
+}
+
+
+def pretty_title(x):
+    x = x.replace('_', ' ').title()
+    return x.lstrip(' ').rstrip(' ')
+
 
 def flatten_dict(d, parent_key='', separator='.'):
     flattened = {}
