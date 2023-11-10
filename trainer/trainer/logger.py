@@ -51,7 +51,7 @@ class Logger(ABC):
                 # Try interactive login (unless already logged in)
                 wandb.login()
                 project = config.get('project', self.project)
-                self._sw = wandb.init(project=project, dir=self.dir, config=tracked_params, tags=tags)
+                self._sw = wandb.init(project=project, dir=self.dir, config=dict(tracked_params), tags=tags)
                 self.resumed_run = False
             else:
                 # The summary-writer/wandb-run has already been initialized

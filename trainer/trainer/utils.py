@@ -7,6 +7,7 @@ import importlib
 from importlib.resources import files
 from warnings import warn
 import collections
+from importlib import import_module
 
 CLASS_TYPES = ['trainer', 'model', 'evaluator']
 
@@ -121,3 +122,13 @@ def is_directory_writable(directory_path):
         # Clean up the temporary file if it was created
         if os.path.exists(tmp_file):
             os.remove(tmp_file)
+
+def import_module_attr(module_path):
+    """
+    e.g. if module_path is 'src.trainer.Trainer'
+         exeuctures 'from src.trainer import Trainer'
+         and returns Trainer object
+    """
+    cls_name = module_path.rsplit('.')[-1]
+    module_name = '.'.join(module_path.rsplit('.')[:-1])
+    return getattr(import_module(module_name), cls_name) 

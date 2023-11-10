@@ -10,13 +10,19 @@ from einops import rearrange
 from rich.progress import Progress, BarColumn, TextColumn, TaskProgressColumn, TimeElapsedColumn, TimeRemainingColumn, MofNCompleteColumn
 import time
 from contextlib import nullcontext
+from trainer.utils import import_module_attr
+import mysql.connector
+import os
+import json
+import hashlib
+from src.studies.metrics import Metric, EpisodeRewards, AvgEpisodeReward, ObservationVideos
 
 class RLEvaluator(Evaluator, ABC):
     
-    def __init__(self, config):
+    def __init__(self, config, metrics=None):
         self.num_eval_episodes = config.get('num_eval_episodes', 1)
         self.display_progress = config.get('display_progress', False)
-        super().__init__(config)
+        super().__init__(config, metrics)
 
     @abstractmethod
     def make_env(self, config):
@@ -225,20 +231,20 @@ class RLEvaluator(Evaluator, ABC):
         max_ep_steps = max_ep_steps or eval_env.max_episode_steps
         num_frames = eval_env.frames
 
-        obses = []       
+
+        max_steps = self.num_eval_episodes*max_ep_steps
+        progress_bar = self.progress_bar if self.display_progress else nullcontext()
+        tracked_data = {
+            'obses': [],
+            'rewards': [],
+            'actions': [],
+            'dones': [],
+        }
         obs, info = eval_env.reset() # obs: (num_env, *obs_shape)
         dones = [False] * eval_env.num_envs
-        episode_reward_list = []
         steps = 0
         steps_to_keep = [None]*eval_env.num_envs
         num_eps = [0]*eval_env.num_envs
-
-        # Create a tmp file to write progress to
-        max_steps = self.num_eval_episodes*max_ep_steps
-    
-
-        eval_info = {}
-        progress_bar = self.progress_bar if self.display_progress else nullcontext()
         with progress_bar:
             for i in range(max_steps):
                 # print(f"Step {i}/{max_steps}")
@@ -258,7 +264,7 @@ class RLEvaluator(Evaluator, ABC):
                 # Get actions for all envs
                 action = self.model.select_action(obs, batched=True)
 
-                obses.append(obs)
+                tracked_data['obses'].append(obs)
 
                 obs, reward, terminated, truncated, info = eval_env.step(action)
                 dones = [x or y for (x,y) in zip(terminated, truncated)]
@@ -270,34 +276,41 @@ class RLEvaluator(Evaluator, ABC):
                     if num_eps[ide] >= self.num_eval_episodes:
                         steps_to_keep[ide] = steps
 
-                episode_reward_list.append(reward)
+                tracked_data['rewards'].append(reward)
+                tracked_data['actions'].append(action)
+                tracked_data['dones'].append(dones)
+                
 
-            episode_reward_list = np.array(episode_reward_list)
+        for key in tracked_data.keys():
+            tracked_data[key] = np.stack(tracked_data[key]) # (Time, N, ...)
+            for ide in range(eval_env.num_envs):
+                steps = steps_to_keep[ide]
+                if key == 'obses':
+                    # Zero out images
+                    tracked_data[key][steps:, ide] = 0
+                else:
+                    # Fill steps after last complete episode with nans
+                    tracked_data[key][steps:, ide] = np.nan
 
-            max_steps = episode_reward_list.shape[0]
-            mask = [np.pad(np.ones(n), (0, max_steps-n),mode='constant') for n in steps_to_keep]
-            mask = np.stack(mask, axis=1)
-            episode_reward_list *= mask
+        eval_outputs = {}
+        for metric_name, metric in self.metrics.items():
+            if metric.type in ['image', 'video']:
+                # If image or video, need storage so files can be saved
+                eval_outputs[metric_name] = metric.log(tracked_data, 
+                                                       eval_storage,
+                                                       filename=f"{env_name}_{metric_name}")
+            else:
+                eval_outputs[metric_name] = metric.log(tracked_data)
 
-            # Log video of evaluation observations
-            obses = np.stack(obses) # (steps, num_envs, *obs_shape)
-            # Stack frames horizontally; Stack episodes along batches
-            obses = rearrange(obses, 'b n (f c) h w -> b c (n h) (f w)', f=len(num_frames)) 
+        if eval_storage is not None:
+            eval_storage.save(eval_output_file, eval_outputs, filetype='torch')
+    
 
-            # Get average episode rewards across all environments
-            eval_info['episode_rewards_avg'] = episode_reward_list.sum(axis=0).mean()
-            eval_info['episode_rewards_std'] = episode_reward_list.sum(axis=0).std()
-            eval_info['episode_rewards'] = episode_reward_list
-            eval_info['episode_obs'] = obses        
+        if hasattr(self, 'progress_bar') and (env_name is not None):
+            self.progress_bar.update(self.progress_tasks[env_name], completed=max_steps)
+            time.sleep(1)
 
-            if eval_storage is not None:
-                eval_storage.save(eval_output_file, eval_info, filetype='torch')
-
-            if hasattr(self, 'progress_bar') and (env_name is not None):
-                self.progress_bar.update(self.progress_tasks[env_name], completed=max_steps)
-                time.sleep(1)
-
-        return eval_info
+        return eval_outputs
     
     def after_eval(self, info=None):
         # Save evaluation output
@@ -308,9 +321,25 @@ class RLEvaluator(Evaluator, ABC):
         self.tmp_root_dir.cleanup()
 
 
+    def _setup_metric_loggers(self, metrics=None):
+        """"
+        Define what metrics should be logged during evaluation
+        """
+        self.metrics = {}
+        # Default metrics to log
+        self.metrics.update({
+            'episode_rewards': EpisodeRewards(),
+            'avg_episode_rewards': AvgEpisodeReward(),
+        })
+
+        # Add any new metrics provided
+        if metrics is not None:
+            self.metrics.update(metrics)
+
 class TrainingRLEvaluator(RLEvaluator):
     """
     Evaluator class to be used during training
+    Uses the trainer's make_env function to create eval env
     """
     def __init__(self, config, trainer):
         self.trainer = trainer
@@ -322,3 +351,64 @@ class TrainingRLEvaluator(RLEvaluator):
     @property
     def module_path(self):
         return 'trainer.rl.rl_evaluator'
+    
+class StudyRLEvaluator(RLEvaluator):
+    """
+    Evaluator class to be used in a Study
+    Performs I/O operations to add info to the study's database
+    """
+    
+    def __init__(self, config, db):
+        self.make_env_fn = import_module_attr(config['make_env_module_path'])
+        self.db = db
+        super().__init__(config)
+
+    @property
+    def module_path(self):
+        return 'trainer.rl.rl_evaluator'
+    
+    def make_env(self, config):
+        return self.make_env_fn(config)
+
+    def _setup_metric_loggers(self, metrics=None):
+        """"
+        Define what metrics should be logged during evaluation
+        """
+        # Add observation videos to tracked metrics
+        if metrics is None:
+            metrics = {'observation_videos': ObservationVideos()}
+
+        super()._setup_metric_loggers(metrics)
+
+    def after_eval(self, info):
+       
+        # Pull needed data from training ckpt
+        training_files = self.input_storage.load_from_archive('ckpt.zip',
+                                                              filenames=['trainer_ckpt.pt'],
+                                                              filetypes=['torch']
+                                                              )
+        
+        trainer_steps = training_files['trainer_ckpt.pt']['step']
+
+        self.db.add_run({
+            'run_id': self.run,
+            'sweep': self.sweep,
+            'project': self.project,
+            'steps': trainer_steps,
+            'folder': self.output_storage.dir
+        })
+
+        filenames = self.output_storage.get_filenames()
+        eval_files = [os.path.basename(filename).rstrip('\n') for filename in filenames if filename.startswith("eval") and filename.endswith(".pt")]
+        for eval_file in eval_files:
+            eval_output = self.output_storage.load(filename=eval_file, filetype='torch')
+            env_name = eval_file.split('eval_output_')[1].split('.pt')[0]
+            ids = {'run_id': self.run,
+                    'sweep': self.sweep or 'none',
+                    'project': self.project,
+                    'eval_name': env_name,
+                    }
+            for metric_name, metric in self.metrics.items():
+                metric_dict = metric.db_dict(ids, eval_output[metric_name])
+                self.db.add_metric(metric_name, metric_dict, temporal=metric.temporal) 
+

@@ -13,6 +13,13 @@ import yaml
 from envyaml import EnvYAML
 import glob
 import io
+import mysql.connector
+import os
+import json
+import hashlib
+from io import BytesIO
+import numpy as np
+import pandas as pd
 
 class Storage:
     """
@@ -27,6 +34,8 @@ class Storage:
             return LocalFileSystemStorage(config)
         elif config['type'] == 'ssh':
             return SSHFileSystemStorage(config)
+        elif config['type'] in ['mysql']:
+            return DBStorage(config)
         else:
             raise ValueError(f"Invalid storage type {config['type']}")
 
@@ -37,15 +46,13 @@ class BaseStorage(ABC):
     """
     def __init__(self, config):
         self.config = config
-        self.project = config['project']
-        self.run = config['run']
+        self.project = config.get('project')
+        self.run = config.get('run')
         self.sweep = config.get('sweep')
 
-    @abstractmethod
     def save(self, filename, data, filetype, write_mode='w'):
         raise NotImplementedError
     
-    @abstractmethod
     def download(self, filename, directory, extract_archives=True):
         raise NotImplementedError
     
@@ -58,6 +65,12 @@ class BaseStorage(ABC):
                         - numpy: use numpy.load to open file           
         """
         with tempfile.TemporaryDirectory() as tmp_dir:
+            
+            dirname = os.path.dirname(filename)
+            if len(dirname) > 0:
+                # If dirname provided, make dir in tmp_dir
+                os.makedirs(os.path.join(tmp_dir, dirname), exist_ok=True)
+
             # Download file to local machine
             self.download(filename, tmp_dir)
             # Load contents of downloaded file
@@ -164,11 +177,17 @@ class LocalFileSystemStorage(BaseStorage):
         self.root_dir = config['root_dir']
         self.sub_dir = config.get('sub_dir')
 
-        # /root/project/sweep/run or /root/project/run
-        if self.sweep is None:
-            self.dir = os.path.join(self.root_dir, self.project, self.run)
+        if self.project is None:
+            self.dir = os.path.join(self.root_dir)
         else:
-            self.dir = os.path.join(self.root_dir, self.project, f"sweep_{self.sweep}", self.run)
+            if self.run is None:
+                self.dir = os.path.join(self.root_dir, self.project)
+            else:
+                # /root/project/sweep/run or /root/project/run
+                if self.sweep is None:
+                    self.dir = os.path.join(self.root_dir, self.project, self.run)
+                else:
+                    self.dir = os.path.join(self.root_dir, self.project, f"sweep_{self.sweep}", self.run)
 
         if self.sub_dir:
             # /root/project/run/sub_dir
@@ -202,6 +221,9 @@ class LocalFileSystemStorage(BaseStorage):
         elif filetype in ['yaml', 'env_yaml']:
             with open(storage_filename, mode='w') as f:
                 yaml.safe_dump(data, f)
+        elif filetype in ['mp4', 'gif']:
+            with open(storage_filename, mode='wb') as f:
+                f.write(data, f)
         else:
             raise NotImplementedError(f"Filetype {filetype} not implemented")  
 
@@ -260,11 +282,15 @@ class LocalFileSystemStorage(BaseStorage):
         # Copy a directory or file to storage
         raise NotImplementedError
     
-    def get_filenames(self):
+    def get_filenames(self, dir=None):
         """
         Return a list of filenames in the directory
         """
-        return glob.glob(self.dir)
+        check_dir = self.dir
+        if dir is not None:
+            check_dir = os.path.join(self.dir, dir)
+
+        return glob.glob(check_dir)
 
     def archive_filenames(self, archive_name):
         try:
@@ -311,11 +337,17 @@ class SSHFileSystemStorage(BaseStorage):
 
         assert self.connection_active(), "Could not establish SSH connection"
 
-        # /root/project/sweep/run or /root/project/run
-        if self.sweep is None:
-            self.dir = os.path.join(self.root_dir, self.project, self.run)
+        if self.project is None:
+            self.dir = self.root_dir
         else:
-            self.dir = os.path.join(self.root_dir, self.project, f"sweep_{self.sweep}", self.run)
+            if self.run is None:
+                self.dir = os.path.join(self.root_dir, self.project)
+            else:
+                # /root/project/sweep/run or /root/project/run
+                if self.sweep is None:
+                    self.dir = os.path.join(self.root_dir, self.project, self.run)
+                else:
+                    self.dir = os.path.join(self.root_dir, self.project, f"sweep_{self.sweep}", self.run)
 
         if self.sub_dir:
             # /root/project/run/sub_dir
@@ -346,6 +378,10 @@ class SSHFileSystemStorage(BaseStorage):
             elif filetype in ['yaml', 'env_yaml']:
                 with sftp.file(storage_filename, mode='wb') as f:
                     yaml.safe_dump(data, f)
+            elif filetype in ['mp4', 'gif']:
+                assert isinstance(data, BytesIO)
+                with sftp.file(storage_filename, mode='wb') as f:
+                    f.write(data.getvalue())
             else:
                 raise NotImplementedError(f"Filetype {filetype} not implemented")   
 
@@ -353,6 +389,10 @@ class SSHFileSystemStorage(BaseStorage):
         """
         Download filename (must be basename) to dir (on local machine)
         """
+        new_file = f"{directory}/{filename}"
+        new_dir = os.path.dirname(new_file)
+        if len(new_dir) > 0:
+            os.makedirs(new_dir, exist_ok=True)
         with self.connection.open_sftp() as sftp:
             sftp.get(self.storage_path(filename), f"{directory}/{filename}")
     
@@ -398,20 +438,19 @@ class SSHFileSystemStorage(BaseStorage):
         """
         if directory is not None:
             # Delete specific folder
-            raise NotImplementedError
+            _, stdout, stderr = self.connection.exec_command(f'rm -r {self.storage_path(directory)}')
+            if stdout.channel.recv_exit_status() != 0:
+                # Could not delete directory
+                raise ValueError(f"Could not delete directory {self.dir}. Error: {stderr.readlines()}")
         elif files is not None:
             # Delete files in the list
             raise NotImplementedError
         else:
-            # Delete the entire storage directory
-            _, stdout, stderr = self.connection.exec_command(f'cd {self.dir}')
+            # TODO: rm -rf could be risky. Safer way?
+            _, stdout, stderr = self.connection.exec_command(f'rm -r {self.dir}')
             if stdout.channel.recv_exit_status() != 0:
-                # Create folder if it does not exist
-                # TODO: rm -rf could be risky. Safer way?
-                _, stdout, stderr = self.connection.exec_command(f'rm -rf {self.dir}')
-                if stdout.channel.recv_exit_status() != 0:
-                    # Could not create directory
-                    raise ValueError(f"Could not delete directory {self.dir}. Error: {stderr.readlines()}")
+                # Could not delete directory
+                raise ValueError(f"Could not delete directory {self.dir}. Error: {stderr.readlines()}")
         
     def make_archive(self, files):
         """
@@ -441,11 +480,15 @@ class SSHFileSystemStorage(BaseStorage):
             raise NotImplementedError
         
 
-    def get_filenames(self):
+    def get_filenames(self, dir=None):
         """
         Return a list of filenames in the directory
         """
-        _, stdout, stderr =  self.connection.exec_command(f'ls {self.dir}')
+        check_dir = self.dir
+        if dir is not None:
+            check_dir = os.path.join(self.dir, dir)
+            
+        _, stdout, stderr =  self.connection.exec_command(f'ls {check_dir}')
         filenames = stdout.readlines()
         filenames = [s.strip('\n') for s in filenames]
         return filenames
@@ -486,5 +529,200 @@ class DBStorage(BaseStorage):
     """
     Database storage for e.g. sweeps
     """
+    DB_TYPES = ['mysql']
+
     def __init__(self, config):
-        raise NotImplementedError("DBStorage not implemented yet")
+        assert config['type'] in self.DB_TYPES, f"Invalid DB type {config['type']}"
+
+        # First, connect to the mysql server
+        self.conn = mysql.connector.connect(
+            host=config['host'],
+            user=config['username'],
+            password=config['password'],
+        )
+
+        databases = self.show_databases()
+        if config['name'] not in databases:
+            try:
+                self.create_database(config['name'])
+            except mysql.connector.errors.ProgrammingError:
+                raise ValueError(f"Could not create database {config['name']}. Try creating database manually")
+
+        # Reconnect -- this time to the database
+        self.conn = mysql.connector.connect(
+                    host=config['host'],
+                    user=config['username'],
+                    password=config['password'],
+                    database=config['name']
+                )
+        
+        assert self.conn.is_connected(), "Could not connect to database"
+
+        self._setup_runs_table()
+        self._setup_metrics_info_table()
+
+    def add_run(self, run_dict):
+        """
+        Add run_dict to the runs table; overwrite if it exists
+        """
+        COLUMNS = {'run_id', 'sweep', 'project', 'eval_name', 'value', 'value_std', 'step'}
+        with self.conn.cursor() as cursor:
+            cursor.execute(f"""INSERT INTO runs
+                        (run_id, sweep, project, steps, folder)
+                        VALUES ('{run_dict['run_id']}', 
+                        '{run_dict['sweep']}', 
+                        '{run_dict['project']}', 
+                        '{run_dict['steps']}', 
+                        '{run_dict['folder']}')
+                        ON DUPLICATE KEY UPDATE
+                        run_id='{run_dict['run_id']}', 
+                        sweep='{run_dict['sweep']}', 
+                        project='{run_dict['project']}',
+                        steps='{run_dict['steps']}',
+                        folder='{run_dict['folder']}'
+                        """)
+
+            self.conn.commit()
+
+    def add_metric(self, metric_name, metric_dict, temporal=False):
+        col_names = [*metric_dict['ids'].keys(), *metric_dict['data'].keys()]            
+        ids = list(metric_dict['ids'].values())
+        if temporal:
+            # Add multiple rows
+            rows = [(*ids,*x) for x in zip(*metric_dict['data'].values())]
+            with self.conn.cursor() as cursor:
+                insert_query = f"""INSERT INTO {metric_name}"""
+                insert_query += f""" ({','.join([f"{x}" for x in col_names])})"""
+                insert_query += f""" VALUES ({', '.join(['%s']*len(col_names))})"""
+                duplicate_query = f"""ON DUPLICATE KEY UPDATE """
+                duplicate_query += ', '.join([f"{col} = VALUES({col})" for col in col_names])
+                insert_query = " ".join([insert_query, duplicate_query])
+                cursor.executemany(insert_query,rows)
+        else:
+            # Add single row
+            row = (*ids, *metric_dict['data'].values())
+            with self.conn.cursor() as cursor:
+                insert_query = f"""INSERT INTO {metric_name}"""
+                insert_query += f""" ({', '.join(col_names)})"""
+                insert_query += f""" VALUES ({', '.join(['%s']*len(col_names))})"""
+                duplicate_query = f"""ON DUPLICATE KEY UPDATE """
+                duplicate_query += ', '.join([f"{col} = VALUES({col})" for col in col_names])
+                insert_query = " ".join([insert_query, duplicate_query])
+                cursor.execute(insert_query,row)
+            self.conn.commit()
+
+    def add_metric_table(self, metric_name, metric):
+        """
+        If the database does not have a metric_name table, create it
+        metric_table_spec: Optional specification for the metric table
+                            if not provided, use the default specs
+        """
+        with self.conn.cursor() as cursor:
+            # Check if table already exists
+            cursor.execute(f"SHOW TABLES LIKE '{metric_name}'")
+            metric_table_exists = cursor.fetchone() is not None
+            if not metric_table_exists:
+                # Create a new table
+                cursor.execute(f"""CREATE TABLE {metric_name} ({metric.db_spec})""")
+                # Add metric info to the metrics table
+                cursor.execute(f"""
+                               INSERT INTO metrics (name, type, temporal) 
+                               VALUES ('{metric_name}', '{metric.type}', '{metric.temporal}')
+                               ON DUPLICATE KEY UPDATE
+                               name='{metric_name}', type='{metric.type}', temporal='{metric.temporal}'
+                               """)
+
+                self.conn.commit()
+
+    def show_metric_table(self, metric_name, limit=100):
+        """
+        If there is a table 'metric_name' in the database, return it
+        """
+        with self.conn.cursor() as cursor:
+            cursor.execute(f"SHOW TABLES LIKE '{metric_name}'")
+            metric_table_exists = cursor.fetchone() is not None
+            if metric_table_exists:
+                query = f"SELECT * FROM {metric_name}"
+                if limit is not None:
+                    query += f" LIMIT {limit}"
+                cursor.execute(query)
+                data = cursor.fetchall()
+                columns = [x[0] for x in cursor.description]
+                data = pd.DataFrame(data, columns=columns)
+                return data
+            else:
+                return None
+            
+    def _setup_metrics_info_table(self):
+        """
+        Table to store information about metrics
+        """
+        with self.conn.cursor() as cursor:
+            cursor.execute(f"SHOW TABLES LIKE 'metrics'")
+            runs_table_exists = cursor.fetchone()
+            if runs_table_exists is None:
+                cursor.execute(f"""CREATE TABLE metrics (
+                            name VARCHAR(255),
+                            type VARCHAR(255),
+                            temporal VARCHAR(255),
+                            PRIMARY KEY (name)
+                )""")
+                self.conn.commit()
+    def _setup_runs_table(self):
+        """
+        If the database does not have a 'runs' table, create it
+        """
+        with self.conn.cursor() as cursor:
+            cursor.execute(f"SHOW TABLES LIKE 'runs'")
+            runs_table_exists = cursor.fetchone()
+            if runs_table_exists is None:
+                cursor.execute(f"""CREATE TABLE runs (
+                            run_id VARCHAR(255),
+                            sweep VARCHAR(255),
+                            project VARCHAR(255),
+                            steps VARCHAR(255),
+                            folder VARCHAR(255),
+                            PRIMARY KEY (run_id, sweep, project)
+                )""")
+                self.conn.commit()
+
+    def show_runs(self, run_names=None, limit=10, output_format='pandas'):
+        if run_names is not None:
+            run_names = run_names if len(run_names) > 1 else [run_names]
+            query = f"SELECT * FROM runs WHERE run_id IN ({run_names})"
+        else:
+            query = f"SELECT * FROM runs"
+
+        if limit is not None:
+            query += f" LIMIT {limit}"
+        
+        with self.conn.cursor() as cursor:
+            cursor.execute(query)
+            runs = cursor.fetchall()
+            cursor.execute("DESCRIBE runs")
+            runs_desc = cursor.fetchall()
+
+        # Return a pandas dataframe?
+        columns = [x[0] for x in runs_desc]
+        if output_format == 'pandas':
+            return pd.DataFrame(runs, columns=columns)
+        elif output_format == 'dict':
+            return {'columns': columns, 'data': runs}
+
+        return runs
+        
+
+    def create_database(self, db_name):
+        with self.conn.cursor() as cursor:
+            cursor.execute(f"CREATE DATABASE {db_name}")
+            self.conn.commit()
+
+
+    def show_databases(self):
+        with self.conn.cursor() as cursor:
+            # Execute a query to retrieve a list of all databases
+            cursor.execute("SHOW DATABASES")
+            # Fetch the result
+            databases = cursor.fetchall()
+            # Extract the database names from the result
+            return [db[0] for db in databases]
