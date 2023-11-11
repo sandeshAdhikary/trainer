@@ -3,4 +3,4 @@
 package_path=$(pip show trainer | grep -E '^Location: ')
 echo "run $package_path/trainer/app/app.py"
 # # Print the path to the package
-streamlit run $package_path/trainer/app/app.py
+streamlit run "$package_path/trainer/app/app.py"
