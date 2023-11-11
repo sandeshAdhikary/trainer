@@ -1,12 +1,9 @@
 import streamlit as st
-from omegaconf import OmegaConf
-import os
-import altair as alt
-import pandas as pd
 from streamlit_js_eval import streamlit_js_eval
-from trainer.utils import pretty_title, COLORS
+from trainer.utils import pretty_title
 from trainer.study import Study
 from trainer.app import app_utils
+from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
 
 if __name__ == "__main__":
     st.set_page_config(layout="wide") 
@@ -34,7 +31,6 @@ if __name__ == "__main__":
         with st.sidebar:
             runs, group_cols = app_utils.group_runs(runs)
         
-        from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
         screen_width = streamlit_js_eval(js_expressions='window.innerWidth', key = 'SCR_WIDTH')
         # chart_width = container_width/2
         # chart_height = container_width/2
