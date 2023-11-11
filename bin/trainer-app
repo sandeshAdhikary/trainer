@@ -1,6 +1,6 @@
 #!/bin/bash
 # Get the installation path of the package
-package_path=$(pip show trainer | grep -E '^Location: ')
-echo "run $package_path/trainer/app/app.py"
+package_path=$(pip show trainer | grep -E '^Location: ' | cut -d ' ' -f 2)
+echo $package_path/trainer/app/app.py
 # # Print the path to the package
-streamlit run "$package_path/trainer/app/app.py"
+# streamlit run $package_path/app/app.py
