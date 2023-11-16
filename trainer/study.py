@@ -63,7 +63,7 @@ class Study:
                     self._run_evaluation(run_eval_config)
 
 
-    def show_runs(self, run_names=None, limit=10, output_format='pandas'):
+    def show_runs(self, run_names=None, limit=None, output_format='pandas'):
         """
         Return a dictionary of studies in the run
         """
@@ -83,7 +83,7 @@ class Study:
 
         return {'model': model_config, 'trainer': trainer_config}
 
-    def metric_table(self, metric_name, limit=100):
+    def metric_table(self, metric_name, limit=None):
         """
         """
         return self.db.show_metric_table(metric_name, limit)
@@ -209,8 +209,8 @@ class Study:
 
 if __name__ == '__main__':
 
-    study_config_path = '/project/src/studies/configs/study.yaml'
-    run_config_path = '/project/src/studies/configs/train_sample.yaml'
+    study_config_path = '/project/src/study/configs/bisim_study_defaults.yaml'
+    run_config_path = '/project/src/studies/configs/bisim_sample.yaml'
     # run_config_path = '/project/src/studies/configs/bisim_study.yaml'
 
     study_cfg = OmegaConf.load(study_config_path)

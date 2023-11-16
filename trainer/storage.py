@@ -91,7 +91,11 @@ class BaseStorage(ABC):
                     return io.BytesIO(f.read())
             elif filetype == 'mp4':
                 import skvideo.io
-                return skvideo.io.vread(os.path.join(tmp_dir, filename))  
+                return skvideo.io.vread(os.path.join(tmp_dir, filename))
+            elif filetype == 'json':
+                with open(os.path.join(tmp_dir, filename), 'r') as f:
+                    return json.load(f)
+                # return json.load(os.path.join(tmp_dir, filename))
             else:
                 raise ValueError(f"Invalid filetype {filetype}")
 
@@ -224,18 +228,31 @@ class LocalFileSystemStorage(BaseStorage):
         elif filetype in ['mp4', 'gif']:
             with open(storage_filename, mode='wb') as f:
                 f.write(data, f)
+        elif filetype in ['json']:
+            with open(storage_filename, mode='wb') as f:
+                if isinstance(data, str):
+                    data = json.loads(data)
+                json.dump(data, f)
         else:
             raise NotImplementedError(f"Filetype {filetype} not implemented")  
 
-    def download(self, filename, directory, extract_archives=True):
+    def download(self, filename, directory, extract_archives=True, delete_archive_after_extract=False):
+
+        new_file = f"{directory}/{os.path.basename(filename)}"
+        new_dir = os.path.dirname(new_file)
+        if len(new_dir) > 0:
+            os.makedirs(new_dir, exist_ok=True)
+
         # Copy file to dir
-        shutil.copy(self.storage_path(filename), f"{directory}/{filename}")
+        shutil.copy(self.storage_path(filename), new_file)
 
         if filename.endswith('.zip') and extract_archives:
             # Unzip and save unzipped files in dir
-            with zipfile.ZipFile(os.path.join(directory, filename), 'r') as zip_ref:
-                zip_ref.extractall(directory)
-
+            with zipfile.ZipFile(new_file, 'r') as zip_ref:
+                zip_ref.extractall(new_dir)
+                
+            if delete_archive_after_extract:
+                os.remove(new_file)
     def storage_path(self, filename):
         """
         return "self.dir/filename")
@@ -382,25 +399,32 @@ class SSHFileSystemStorage(BaseStorage):
                 assert isinstance(data, BytesIO)
                 with sftp.file(storage_filename, mode='wb') as f:
                     f.write(data.getvalue())
+            elif filetype in ['json']:
+                with sftp.file(storage_filename, mode='wb') as f:
+                    if isinstance(data, str):
+                        data = json.loads(data)
+                    json.dump(data, f)
             else:
                 raise NotImplementedError(f"Filetype {filetype} not implemented")   
 
-    def download(self, filename, directory, extract_archives=True):
+    def download(self, filename, directory, extract_archives=True, delete_archive_after_extract=False):
         """
         Download filename (must be basename) to dir (on local machine)
         """
-        new_file = f"{directory}/{filename}"
+        new_file = f"{directory}/{os.path.basename(filename)}"
         new_dir = os.path.dirname(new_file)
         if len(new_dir) > 0:
             os.makedirs(new_dir, exist_ok=True)
         with self.connection.open_sftp() as sftp:
-            sftp.get(self.storage_path(filename), f"{directory}/{filename}")
+            sftp.get(self.storage_path(filename), new_file)
     
         if filename.endswith('.zip') and extract_archives:
             # Unzip and save unzipped files in dir
-            with zipfile.ZipFile(os.path.join(directory, filename), 'r') as zip_ref:
+            with zipfile.ZipFile(new_file, 'r') as zip_ref:
                 zip_ref.extractall(directory)
-        
+            if delete_archive_after_extract:
+                os.remove(new_file)
+    
     def storage_path(self, filename):
         """
         return "self.dir/filename"
@@ -420,7 +444,8 @@ class SSHFileSystemStorage(BaseStorage):
                 # Delete existing directory
                 _, stdout, stderr = self.connection.exec_command(f'rm -r {directory}')
                 if stdout.channel.recv_exit_status() != 0:
-                    raise ValueError(f"Could not delete directory {directory}. Error: {stderr.readlines()}")
+                    raise StorageDeleteError(f"Could not delete directory {directory}. Error: {stderr.readlines()}")
+                    # raise ValueError(f"Could not delete directory {directory}. Error: {stderr.readlines()}")
         else:
             if stdout.channel.recv_exit_status() == 0:
                 # Directory already exists, so exit
@@ -441,7 +466,8 @@ class SSHFileSystemStorage(BaseStorage):
             _, stdout, stderr = self.connection.exec_command(f'rm -r {self.storage_path(directory)}')
             if stdout.channel.recv_exit_status() != 0:
                 # Could not delete directory
-                raise ValueError(f"Could not delete directory {self.dir}. Error: {stderr.readlines()}")
+                # raise ValueError(f"Could not delete directory {self.dir}. Error: {stderr.readlines()}")
+                raise StorageDeleteError(f"Could not delete directory {directory}. Error: {stderr.readlines()}")
         elif files is not None:
             # Delete files in the list
             raise NotImplementedError
@@ -450,7 +476,8 @@ class SSHFileSystemStorage(BaseStorage):
             _, stdout, stderr = self.connection.exec_command(f'rm -r {self.dir}')
             if stdout.channel.recv_exit_status() != 0:
                 # Could not delete directory
-                raise ValueError(f"Could not delete directory {self.dir}. Error: {stderr.readlines()}")
+                raise StorageDeleteError(f"Could not delete directory {self.dir}. Error: {stderr.readlines()}")
+                # raise ValueError(f"Could not delete directory {self.dir}. Error: {stderr.readlines()}")
         
     def make_archive(self, files):
         """
@@ -686,7 +713,7 @@ class DBStorage(BaseStorage):
                 )""")
                 self.conn.commit()
 
-    def show_runs(self, run_names=None, limit=10, output_format='pandas'):
+    def show_runs(self, run_names=None, limit=None, output_format='pandas'):
         if run_names is not None:
             run_names = run_names if len(run_names) > 1 else [run_names]
             query = f"SELECT * FROM runs WHERE run_id IN ({run_names})"
@@ -726,3 +753,7 @@ class DBStorage(BaseStorage):
             databases = cursor.fetchall()
             # Extract the database names from the result
             return [db[0] for db in databases]
+
+
+class StorageDeleteError(Exception):
+    pass

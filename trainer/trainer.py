@@ -168,9 +168,9 @@ class Trainer(ABC):
 
     #############################
     
-    @property
-    def module_path(self):
-        return None
+    # @property
+    # def module_path(self):
+    #     return None
     
     def _set_storage(self):
         # Update project and run_id for stroage defs
@@ -332,15 +332,19 @@ class Trainer(ABC):
         return ckpt
         
 
-    def _save_checkpoint(self, log_checkpoint=True, save_to_output_storage=True, ckpt_state_args=None):
+    def _save_checkpoint(self, log_checkpoint=True, save_to_output_storage=True, ckpt_state_args=None, ckpt_name=None):
         """
         Zip the checkpoint folder and log it
         """
+
+        if ckpt_name is None:
+            ckpt_name = 'ckpt'
+
         # Create an archive of the checkpoint files
-        self._create_checkpoint_files(archive=True, ckpt_state_args=ckpt_state_args)
+        self._create_checkpoint_files(archive=True, ckpt_state_args=ckpt_state_args, ckpt_name=ckpt_name)
 
         # Check if zip file was created properly
-        if self.tmp_storage.archive_filenames('ckpt.zip') is None:
+        if self.tmp_storage.archive_filenames(f'{ckpt_name}.zip') is None:
             warn("Checkpoint zip file was not created properly (in tmp storage). Checkpoint not saved in output storage.")
             self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_save_error': 1})
             return None
@@ -351,42 +355,44 @@ class Trainer(ABC):
             #     self.output_storage.copy('ckpt.zip', 'ckpt_backup.zip')
 
             # upload checkpoint to output storage as a temp file
-            self.output_storage.upload(files=self.tmp_storage.storage_path('ckpt.zip'), new_dir='ckpt_temp')
+            self.output_storage.upload(files=self.tmp_storage.storage_path(f'{ckpt_name}.zip'), new_dir=f'{ckpt_name}_temp')
             # Check if the new temp ckpt was created successfully
-            if self.output_storage.archive_filenames('ckpt_temp/ckpt.zip') is None:
+            if self.output_storage.archive_filenames(f'{ckpt_name}_temp/{ckpt_name}.zip') is None:
                 # warn("The ckpt_temp.zip file was not uploaded properly (to output storage)")
                 # Replace 'ckpt.zip' with the backup
                 # self.output_storage.copy('ckpt_backup.zip', 'ckpt.zip')
                 self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint_save_error': 1})
-                raise Exception("The ckpt_temp.zip file was not uploaded properly (to output storage)")
+                raise Exception(f"The {ckpt_name}_temp.zip file was not uploaded properly (to output storage)")
             else:
                 # No errors in the new checkpoint, replace existing backup
-                self.output_storage.copy('ckpt_temp/ckpt.zip', 'ckpt.zip')
+                self.output_storage.copy(f'{ckpt_name}_temp/{ckpt_name}.zip', f'{ckpt_name}.zip')
                 # Delete the temp file
-                self.output_storage.delete(directory='ckpt_temp')
+                self.output_storage.delete(directory=f"{ckpt_name}_temp")
 
         if log_checkpoint:
             # Save checkpoint to logger (e.g. wandb)
-            self.logger.log_checkpoint(filepath=self.tmp_storage.storage_path('ckpt.zip'))
+            self.logger.log_checkpoint(filepath=self.tmp_storage.storage_path(f'{ckpt_name}.zip'))
 
     def _create_checkpoint_files(self, temporary_dir=True, archive=True, ckpt_state_args=None, **kwargs):
         """
         Save checkpoint files to storage
         """
+        ckpt_name = kwargs.get('ckpt_name', 'ckpt')
+
         storage = self.tmp_storage if temporary_dir else self.output_storage
         # Get checkpoint state
         ckpt_state_args = ckpt_state_args or {}
         ckpt_state = self._get_checkpoint_state(**ckpt_state_args)
 
         for name,state in ckpt_state.items():
-            storage.save(f"ckpt/{name}_ckpt.pt", state, 'torch')
+            storage.save(f"{ckpt_name}/{name}_{ckpt_name}.pt", state, 'torch')
 
         if archive:
-            files=[f"ckpt/{name}_ckpt.pt" for name in ckpt_state.keys()]
+            files=[f"{ckpt_name}/{name}_{ckpt_name}.pt" for name in ckpt_state.keys()]
             # Make the archive
-            storage.make_archive(files, zipfile_name='ckpt.zip')
+            storage.make_archive(files, zipfile_name=f'{ckpt_name}.zip')
             # Delete the files once they've been archived
-            storage.delete(directory='ckpt')
+            storage.delete(directory=ckpt_name)
 
     def _get_checkpoint_state(self, save_optimizers, **kwargs):
         # # Save trainer state

@@ -1,14 +1,13 @@
 from trainer.trainer import Trainer
 from trainer.rl.envs import TrainerEnv
 from typing import Dict
-from abc import ABC, abstractmethod
+from abc import ABC
 from trainer.rl.replay_buffers import ReplayBuffer
 import numpy as np
 from rich.panel import Panel
 from rich.columns import Columns
 from rich.layout import Layout
 from rich.live import Live
-from warnings import warn
 from copy import deepcopy
 from functools import partial
 from trainer.rl.rl_evaluator import TrainingRLEvaluator
@@ -17,7 +16,6 @@ import tempfile
 from glob import glob
 import os
 import torch
-from importlib import import_module
 from trainer import Model, Logger
 from trainer.utils import import_module_attr
 
@@ -44,7 +42,6 @@ class RLTrainer(Trainer, ABC):
         )
         # Max size of chunks when saving replay buffer
         self.replay_buffer_chunk_len = config.get('buffer_chunk_len', 10_000)
-        # assert self.replay_buffer_chunk_len < self.save_checkpoint_freq # Otherwise, replay buffer will not be saved
 
         # Set up other config
         self.num_eval_episodes = self.config.get('num_eval_episodes', 3)
@@ -55,6 +52,7 @@ class RLTrainer(Trainer, ABC):
         self.eval_job_log_file = None
         self.eval_job_output_file = None
         
+        self.best_avg_ep_reward = None
     
     def _setup_terminal_display(self, config: Dict) -> None:
         super()._setup_terminal_display(config)
@@ -168,10 +166,13 @@ class RLTrainer(Trainer, ABC):
         """
         assert hasattr(self, 'evaluator') and (self.evaluator is not None), 'Evaluator is not set!'
         if not async_eval:
+            self.progress_eval.update(0, description='[yellow] Running Evaluation...', completed=0)
             # Update the evaluator's model
             self.evaluator.load_model(state_dict=self.model.state_dict())
             eval_output = self.evaluator.run_eval()
             self.eval_log.append({'step': self.step, 'log': eval_output['eval_env']})
+            self.progress_eval.update(0, description='[green] Complete!', completed=0)
+            # self.progress_eval.update(0, completed=0)
         else:
             self._wait_for_eval_job() # If previous eval job has not finished, wait for it
             self._start_async_eval_job() # Start a new eval job
@@ -188,19 +189,23 @@ class RLTrainer(Trainer, ABC):
             job_status = None
             while job_status is None:
                 job_status = self.eval_job.poll()
-                try:
-                    eval_job_log = self.output_storage.load(self.eval_job_log_file, filetype='text')
-                    step = eval_job_log.split('\n')[-2].split('step:')[-1]
-                    self.progress_eval.update(0, completed=float(step))
-                except FileNotFoundError:
-                    # File may not have been populated yet
-                    pass
+                if job_status is None:
+                    try:
+                        eval_job_log = self.output_storage.load(self.eval_job_log_file, filetype='text')
+                        step = eval_job_log.split('\n')[-2].split('step:')[-1]
+                        self.progress_eval.update(0, completed=float(step)) # update eval progress
+                    except FileNotFoundError:
+                        # File may not have been populated yet
+                        pass
+                
 
             err = None if job_status == 0 else self.eval_job.stderr.readlines()
             if err is None:
                 # Add evaluation results to self.eval_log
                 eval_output = self.output_storage.load(self.eval_job_output_file, filetype='torch')
                 self.eval_log.append({'step': self.eval_job_step, 'log': eval_output})
+                # Reset the progress bar
+                self.progress_eval.update(0, completed=0)
             else:
                 self.output_storage.save(f"eval_job_errs.txt", '\n'.join(err), filetype='text', write_mode='w')
                 raise Exception(f"Eval job failed with error. Check error log at {self.output_storage.storage_path('eval_job_errs.txt')}")
@@ -219,10 +224,19 @@ class RLTrainer(Trainer, ABC):
         tmp_evaluator_config['async_eval'] = False
         tmp_evaluator_config['save_output'] = False
         tmp_trainer_config = deepcopy(self.config)
+        
         # Make replay buffer tiny to save memory
         tmp_trainer_config['replay_buffer']['replay_buffer_capacity'] = 1
         self.eval_job_log_file = "eval_log_eval_env.txt"
         self.eval_job_output_file = "eval_output_eval_env.pt"
+
+        # Delete old eval_log and model files
+        output_storage_files = self.output_storage.get_filenames()
+        if self.eval_job_log_file in output_storage_files:
+            self.output_storage.delete(self.eval_job_log_file)
+        if self.eval_job_output_file in output_storage_files:
+            self.output_storage.delete(self.eval_job_output_file)
+
         eval_packet = {
             'evaluator': {
                 'module': self.evaluator.module_path, 
@@ -309,6 +323,30 @@ class RLTrainer(Trainer, ABC):
 
 
         self.log_epoch(epoch_info)
+
+
+        # Potentially save best model after every complete episode
+        ep_done = any(self.done) if self.env.is_vec_env else self.done
+        if ep_done:
+            # Save only if all envs have completed at least 3 episodes
+            if (self.step > 0) and (all([x >= 3  for x in self.num_episodes])):
+                # For each env, compute average ep_reward over the last 3 episodes
+                avg_ep_reward = [np.mean(x[-3:]) for x in self.episode_reward_list]
+                # average this over the envs
+                avg_ep_reward = np.mean(avg_ep_reward)
+                if (self.best_avg_ep_reward is None) or (avg_ep_reward > self.best_avg_ep_reward):
+                    self.best_avg_ep_reward = avg_ep_reward
+                    # Save this as the best model
+                    self._save_checkpoint(ckpt_name='best_ckpt',
+                                          ckpt_state_args={
+                                              'save_buffer':False,
+                                              'save_optimizers':False,
+                                              'save_logs': False
+                                              })
+                    self.logger.log(log_dict={'eval_step': self.step, 'checkpoint/best_avg_ep_reward': self.best_avg_ep_reward})
+
+                
+
 
     def after_train(self, info=None):
         """
@@ -406,16 +444,23 @@ class RLTrainer(Trainer, ABC):
 
 
         # If async eval, check log files for progress
+        if self.async_eval:
+            if self.eval_job_log_file is not None:
+                try:
+                    job_status = self.eval_job.poll()
+                    if job_status is not None:
+                        # Eval job has ended
+                        self.progress_eval.update(0, completed=0)
+                    else:
+                        eval_job_log = self.output_storage.load(self.eval_job_log_file, filetype='text')
+                        # Log progress
+                        step = eval_job_log.split('\n')[-2].split('step:')[-1]
+                        self.progress_eval.update(0, completed=float(step))
+                except FileNotFoundError as e:
+                    pass
+            else:
+                self.progress_eval.update(0, completed=0)
 
-        if self.eval_job_log_file is not None:
-            try:
-                eval_job_log = self.output_storage.load(self.eval_job_log_file, filetype='text')
-                # Log progress
-                step = eval_job_log.split('\n')[-2].split('step:')[-1]
-                self.progress_eval.update(0, completed=float(step))
-            except FileNotFoundError as e:
-                pass
-                    
         # Log eval metrics
         if len(self.eval_log) > 0:
             last_item = self.eval_log[-1]
@@ -423,6 +468,7 @@ class RLTrainer(Trainer, ABC):
                                       'eval/episode_reward_avg': float(last_item['log']['avg_episode_rewards']['avg']),
                                       'eval/episode_reward_std': float(last_item['log']['avg_episode_rewards']['std'])}
                                       )
+            
 
     def log_train(self, info=None):
         pass

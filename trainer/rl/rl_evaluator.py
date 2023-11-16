@@ -390,6 +390,7 @@ class StudyRLEvaluator(RLEvaluator):
         
         trainer_steps = training_files['trainer_ckpt.pt']['step']
 
+        # Add the run to the study's database
         self.db.add_run({
             'run_id': self.run,
             'sweep': self.sweep,
@@ -397,6 +398,15 @@ class StudyRLEvaluator(RLEvaluator):
             'steps': trainer_steps,
             'folder': self.output_storage.dir
         })
+
+        # Save training metrics
+        import wandb
+        api = wandb.Api()
+        run = api.run(f"{self.project}/{self.run}")
+        train_history = run.history(keys=['trainer_step', 'train/episode_reward']).to_json()
+        self.output_storage.save('train_history.json', train_history, filetype='json')
+
+        
 
         filenames = self.output_storage.get_filenames()
         eval_files = [os.path.basename(filename).rstrip('\n') for filename in filenames if filename.startswith("eval") and filename.endswith(".pt")]

@@ -1,10 +1,42 @@
 import pandas as pd
 import streamlit as st
-from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
+from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode, DataReturnMode
 from omegaconf import OmegaConf
 from trainer.utils import pretty_title
 
-def legend_table(legend_color_map, legend_col, data):
+
+def plot_scalars(metric, data, group_cols, chart_size, facet=None):
+    if facet is None:
+        facet = {}
+    chart, chart_info = metric.plot(data, facet=facet, 
+                                    show_legend=False,
+                                    chart_properties={'width': chart_size, 
+                                                    'height': chart_size,}
+                                                    )
+    legend_table = make_legend_table(data, group_cols, 
+                                     legend_color_map=chart_info['legend_colors'], 
+                                     legend_col='group')
+    st.dataframe(legend_table, hide_index=True)
+    st.altair_chart(chart)
+
+def plot_videos(data, storage):
+    project_select = st.selectbox("Select Project", data['project'].unique())
+    sweep_select = st.selectbox("Select Sweep", data.query(f"project=='{project_select}'")['sweep'].unique())
+    run_select = st.selectbox("Select Run", data.query(f"project=='{project_select}' and sweep=='{sweep_select}'")['run_id'].unique())
+    evals = data.query(f"project=='{project_select}' and sweep=='{sweep_select}' and run_id=='{run_select}'")
+    num_vids = evals.shape[0]
+    vid_cols = st.columns(num_vids)
+    for idv in range(num_vids):
+        data_row = evals.iloc[idv]
+        filepath = data_row['filepath']
+        filepath = filepath.split(storage.dir)[1].lstrip('/')
+        video = storage.load(filepath, filetype='bytesio')
+        vid_cols[idv].video(data=video)
+        vid_cols[idv].write(f"Eval Name: `{pretty_title(data_row['eval_name'])}`")
+
+def make_legend_table(data, group_cols, legend_color_map, legend_col):
+    cols = [*group_cols, 'group']
+    data = data.loc[:, cols].drop_duplicates()
     # legend_table = data.loc[:,cols].drop_duplicates()
     data.rename({f'{legend_col}': "legend"}, axis='columns', inplace=True)
     # move legend to first column
@@ -15,8 +47,6 @@ def legend_table(legend_color_map, legend_col, data):
     data = data.style.map(lambda x: df_apply_colors(x, legend_color_map), subset=['Legend'])
     return data
     
-
-
 def df_apply_colors(val, color_dict):
      color = color_dict[val]
      return f'background-color: {color}; color: {color}; font-size:0.01em'
@@ -80,13 +110,20 @@ def run_selector(study):
     gridOptions = builder.build()
     # gridOptions['getRowStyle'] = jscode
     data_selector = AgGrid(df, gridOptions=gridOptions,
-                columns_auto_size_mode=1,theme="streamlit", allow_unsafe_jscode=True)
-    # Return selected rows from original data
-    selected_row_idxes = [x["_selectedRowNodeInfo"]["nodeRowIndex"] for x in data_selector.selected_rows]
-    data_selector = data_selector.data.iloc[selected_row_idxes,:]
-    data_selector['sweep'] = data_selector['sweep'].fillna('None')
-    data_selector['sweep'] = data_selector['sweep'].apply(lambda x: str(x).lower())
-    return data_selector
+                columns_auto_size_mode=1,theme="streamlit", allow_unsafe_jscode=True,
+                data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+                header_checkbox_selection_filtered_only=True
+    )
+                # update_mode=GridUpdateMode.MODEL_CHANGED,)
+    # Get filtered data
+    final_data = pd.DataFrame(data_selector.data).fillna("None")
+    if len(data_selector.selected_rows) > 0:
+        selected_data = pd.DataFrame(data_selector.selected_rows).drop('_selectedRowNodeInfo', axis='columns')
+        selected_data = selected_data.fillna("None")
+        final_data = final_data.merge(selected_data, how='inner', on=final_data.columns.tolist())
+        final_data['sweep'] = final_data['sweep'].apply(lambda x: str(x).lower())
+        return final_data
+    return None
 
 def exclude_key(x):
     exclude = False
@@ -120,7 +157,6 @@ def group_runs(runs, default_group_cols=None):
         runs['group'] = runs.apply(lambda x: ' | '.join([f'{g} = {x[g]}' for g in group_cols]), axis=1)
     return runs, group_cols
 
-
 def avg_over_group(data, group_by_cols=None):
     """"
     data should have a column named 'group'
@@ -129,7 +165,7 @@ def avg_over_group(data, group_by_cols=None):
     For non-numeric columns, we'll take the first value
     """
     if group_by_cols is None:
-        group_by_cols  = ['group', 'eval_name']
+        group_by_cols  = ['group']
     if 'step' in data.columns:
         group_by_cols.append('step')
     # Define custom aggregation functions
@@ -150,14 +186,30 @@ def avg_over_group(data, group_by_cols=None):
     
     return result
 
+
 def load_config():
-    config_path = st.text_input("Enter config path", value="")
+    config_path = st.text_input("Enter config path", value=None)
     config_button = st.form_submit_button(label='Analyze')
     config = None
-    try:
-        config = OmegaConf.load(config_path)
-        return OmegaConf.to_container(config, resolve=True)
-    except FileNotFoundError:
-        st.error(f"Config file {config_path} not found")
-            
+    if config_path is not None:
+        try:
+            config = OmegaConf.load(config_path)
+            return OmegaConf.to_container(config, resolve=True)
+        except (FileNotFoundError, IsADirectoryError):
+            st.error(f"Config file {config_path} not found")
     return config
+
+
+def view_selected_data(runs):
+        st.write("""
+                Here's the data based on your selection and grouping criteria.
+                The `group` column shows each run's assigned group.
+                Numeric values have been averaged over the groups. For non-numeric 
+                columns, we display the first value for the group.
+                """)
+        projects = ' '.join([f"`{x}`" for x in runs['project'].unique()])
+        st.write(f"Projects: {projects}")
+        sweeps = ' '.join([f"`{x}`" for x in runs['sweep'].unique()])
+        st.write(f"Sweeps: {sweeps}")
+        runs = runs[['group', *runs.columns.difference(['group'])]]
+        st.write(runs)
