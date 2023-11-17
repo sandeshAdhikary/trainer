@@ -364,7 +364,7 @@ class RLTrainer(Trainer, ABC):
                                               'save_optimizers':False,
                                               'save_logs': False
                                               })
-                    self.logger.log(log_dict={'eval_step': self.step, 'checkpoint/best_avg_ep_reward': self.best_avg_ep_reward})
+                self.logger.log(log_dict={'eval_step': self.step, 'checkpoint/best_avg_ep_reward': self.best_avg_ep_reward})
 
                 
 
