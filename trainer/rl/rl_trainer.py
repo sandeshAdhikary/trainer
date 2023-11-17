@@ -554,7 +554,7 @@ class RLTrainer(Trainer, ABC):
         self.num_model_updates = state_dict.get('num_model_updates', 0)
         self.num_checkpoint_saves = state_dict.get('num_checkpoint_saves', 0)
         self.num_checkpoint_loads = state_dict.get('num_checkpoint_loads', 0)
-        self.best_avg_ep_reward = None
+        self.best_avg_ep_reward = state_dict.get('best_avg_ep_reward', None)
 
 
         
