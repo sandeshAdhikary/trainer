@@ -193,10 +193,6 @@ class Trainer(ABC):
             'run': self.run
         })
 
-    # def _register_trainer(self, overwrite=False):
-    #     if self.module_path is not None:
-    #         register_class('trainer', self.__class__.__name__, self.module_path)
-
     def parse_config(self, config: Dict) -> Dict:
         return config
 
@@ -394,25 +390,21 @@ class Trainer(ABC):
             # Delete the files once they've been archived
             storage.delete(directory=ckpt_name)
 
+    def _get_trainer_state(self):
+        """
+        The current trainer state
+        """
+        return {'step': self.step,
+                'epoch': self.epoch,
+                'train_log': self.train_log, 
+                'eval_log': self.eval_log,
+                'train_end': self.train_end,
+                'num_checkpoint_saves': self.num_checkpoint_saves,
+                'num_checkpoint_loads': self.num_checkpoint_loads,
+            }
+
     def _get_checkpoint_state(self, save_optimizers, **kwargs):
-        # # Save trainer state
-        trainer_state = {'step': self.step,
-                         'epoch': self.epoch,
-                         'train_log': self.train_log, 
-                         'eval_log': self.eval_log,
-                         'train_end': self.train_end,
-                         'num_checkpoint_saves': self.num_checkpoint_saves,
-                         'num_checkpoint_loads': self.num_checkpoint_loads,
-                         'obs': self.obs,
-                         'done': self.done,
-                         'reward': self.reward,
-                         'num_episodes': self.num_episodes,
-                         'episode': self.episode,
-                         'current_episode_reward': self.current_episode_reward,
-                         'episode_reward_list': self.episode_reward_list,
-                         'num_model_updates': self.num_model_updates,
-                         'epoch': self.epoch
-                        }
+        trainer_state = self._get_trainer_state()
         ckpt_state = {
             'trainer': trainer_state,
             'model': self.model.state_dict(save_optimizers=save_optimizers),

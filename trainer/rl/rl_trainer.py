@@ -51,8 +51,7 @@ class RLTrainer(Trainer, ABC):
         self.eval_job_step = None
         self.eval_job_log_file = None
         self.eval_job_output_file = None
-        
-        self.best_avg_ep_reward = None
+    
     
     def _setup_terminal_display(self, config: Dict) -> None:
         super()._setup_terminal_display(config)
@@ -110,9 +109,31 @@ class RLTrainer(Trainer, ABC):
                 
             self.after_train() 
 
+    def _get_trainer_state(self):
+        """
+        The current trainer state
+        """
+        trainer_state = super()._get_trainer_state() # step, epoch, ckpt_loads, etc.
+        # Add RL specifics in the trainer_state
+        trainer_state.update(
+            {
+                'obs': self.obs,
+                'done': self.done,
+                'reward': self.reward,
+                'num_episodes': self.num_episodes,
+                'episode': self.episode,
+                'current_episode_reward': self.current_episode_reward,
+                'episode_reward_list': self.episode_reward_list,
+                'num_model_updates': self.num_model_updates,
+                'best_avg_ep_reward': self.best_avg_ep_reward,                         
+            }
+        )
+        return trainer_state
+
     def _get_checkpoint_state(self, save_optimizers=True, save_buffer=True, save_logs=True):
         # Get ckpt state for trainer and model
         ckpt_state = super()._get_checkpoint_state(save_optimizers=save_optimizers)
+        
         # Add buffer state to the checkpoint
         if save_buffer:
             buffer_state = self.replay_buffer.state_dict()
@@ -230,12 +251,12 @@ class RLTrainer(Trainer, ABC):
         self.eval_job_log_file = "eval_log_eval_env.txt"
         self.eval_job_output_file = "eval_output_eval_env.pt"
 
-        # Delete old eval_log and model files
-        output_storage_files = self.output_storage.get_filenames()
-        if self.eval_job_log_file in output_storage_files:
-            self.output_storage.delete(self.eval_job_log_file)
-        if self.eval_job_output_file in output_storage_files:
-            self.output_storage.delete(self.eval_job_output_file)
+        # # Delete old eval_log and model files
+        # output_storage_files = self.output_storage.get_filenames()
+        # if self.eval_job_log_file in output_storage_files:
+        #     self.output_storage.delete(self.eval_job_log_file)
+        # if self.eval_job_output_file in output_storage_files:
+        #     self.output_storage.delete(self.eval_job_output_file)
 
         eval_packet = {
             'evaluator': {
@@ -533,6 +554,7 @@ class RLTrainer(Trainer, ABC):
         self.num_model_updates = state_dict.get('num_model_updates', 0)
         self.num_checkpoint_saves = state_dict.get('num_checkpoint_saves', 0)
         self.num_checkpoint_loads = state_dict.get('num_checkpoint_loads', 0)
+        self.best_avg_ep_reward = None
 
 
         
