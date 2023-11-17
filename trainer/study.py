@@ -1,4 +1,4 @@
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig
 from trainer.storage import Storage
 from copy import deepcopy
 from trainer.utils import import_module_attr
@@ -11,10 +11,10 @@ class Study:
     
     def __init__(self, cfg):
         self.config = cfg
-        self.name = self.config['name']
-        self.storage = Storage(cfg['storage'])
-        self._setup_metrics(cfg['metrics'])
-        self._setup_db(cfg['database'])
+        self.name = self.config['study']['name']
+        self.storage = Storage(cfg['study']['storage'])
+        self._setup_metrics(cfg['study']['metrics'])
+        self._setup_db(cfg['study']['database'])
 
     def train(self, config):
         trainer = self._make_trainer(config)
@@ -106,7 +106,6 @@ class Study:
                        This is needed to initialize the logger for resumed runs
         """
         # Set up the trainer
-        # trainer = self.init_trainer(config)
         train_config = self._merge_configs(self.config['trainer'], config.get('trainer', {}))
         train_config['storage']['input']['project'] = train_config['project']
         train_config['storage']['output']['project'] = train_config['project']
@@ -123,12 +122,12 @@ class Study:
     
     def _make_logger(self, config, pre_init_run=None):
         logger_config = self._merge_configs(self.config['logger'], config.get('logger', {}))
-        logger_config['project'] = config['project']
         logger_cls = import_module_attr(logger_config['module_path'])
         return logger_cls(dict(logger_config), run=pre_init_run)
 
     def _make_model(self, config, trainer):
         model_config = self._merge_configs(self.config['model'], config.get('model', {}))
+        # TODO: Avoid having to get env_shapes from trainer
         model_config.update(trainer.env.get_env_shapes()) # Need env shapes from trainer's env
         model_cls = import_module_attr(model_config['module_path'])
         return model_cls(dict(model_config))
@@ -141,9 +140,8 @@ class Study:
         return model
 
     def _make_sweeper(self, config):
-
-        sweeper_config = {'project': config['project']}
-        sweeper_config['sweeper'] = self._merge_configs(self.config['sweeper'], 
+        sweeper_config = {'project': self.config['project']['project']}
+        sweeper_config['sweeper'] = self._merge_configs(self.config.get('sweeper', {}), 
                                              config.get('sweeper', {}))
         sweeper_config['trainer'] = self._merge_configs(self.config['trainer'], 
                                                         config.get('trainer', {}))

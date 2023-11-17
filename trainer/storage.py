@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 import tempfile
 import os
 import wandb
@@ -344,6 +344,8 @@ class SSHFileSystemStorage(BaseStorage):
         super().__init__(config)
 
         self.connection = paramiko.client.SSHClient()
+        import logging
+        logging.getLogger("paramiko").setLevel(logging.WARNING)
         self.connection.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         self.connection.connect(config['host'], 
                                 username=config['username'], 

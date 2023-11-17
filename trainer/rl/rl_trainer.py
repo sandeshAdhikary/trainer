@@ -444,6 +444,7 @@ class RLTrainer(Trainer, ABC):
 
 
         # If async eval, check log files for progress
+        #TODO: Clean up this gross nested if/elses and try/excepts
         if self.async_eval:
             if self.eval_job_log_file is not None:
                 try:
@@ -453,9 +454,13 @@ class RLTrainer(Trainer, ABC):
                         self.progress_eval.update(0, completed=0)
                     else:
                         eval_job_log = self.output_storage.load(self.eval_job_log_file, filetype='text')
-                        # Log progress
-                        step = eval_job_log.split('\n')[-2].split('step:')[-1]
-                        self.progress_eval.update(0, completed=float(step))
+                        try:
+                            # Log progress
+                            step = eval_job_log.split('\n')[-2].split('step:')[-1]
+                            self.progress_eval.update(0, completed=float(step))
+                        except IndexError as e:
+                            # File has been populated, but no "step" line created yet
+                            pass
                 except FileNotFoundError as e:
                     pass
             else:
