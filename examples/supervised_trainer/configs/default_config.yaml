@@ -22,6 +22,7 @@ trainer:
   project: ${..project.project}
   module_path: examples.supervised_trainer.modules.SimpleSupervisedTrainer
   num_epochs: 20
+  terminal_display: rich
   # num_train_steps: 2_000
   eval_freq: 100
   batch_size: 32

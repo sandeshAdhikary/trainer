@@ -9,16 +9,19 @@ class Model(ABC):
 
     def __init__(self, config, model, optimizer, loss_fn):
         self.config = self.parse_config(config)
-        self.model = model
+        self.device = torch.device(self.config.get('device'))
+        if self.device is None:
+            self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        self.model = model.to(self.device)
         self.optimizer = optimizer
         self.loss_fn = loss_fn
 
     @abstractmethod
-    def training_step(self):
+    def training_step(self, batch, batch_idx):
         raise NotImplementedError
     
     @abstractmethod
-    def evaluation_step(self):
+    def evaluation_step(self, batch, batch_idx):
         raise NotImplementedError
 
     def parse_config(self, config: Dict) -> Union[SimpleNamespace, Dict]:
@@ -31,7 +34,27 @@ class Model(ABC):
     
 
     def forward(self, x):
+        if x.device != self.device:
+            x = x.to(self.device)
         return self.model(x)
+
+    def loss(self, *args, **kwargs):
+        
+        # Move all tensors args to device
+        new_args = []
+        for a in args:
+            if torch.is_tensor(a) and (a.device != self.device):
+                a = a.to(self.device)
+            new_args.append(a)
+        
+        # Move all tensor kwargs to device
+        new_kwargs = {}
+        for k, v in kwargs.items():
+            if torch.is_tensor(kwargs[k]) and kwargs[k].device != self.device:
+                v = v.to(self.device)
+            new_kwargs[k] = v
+
+        return self.loss_fn(*new_args, **new_kwargs)
 
     def state_dict(self, include_optimizers=False):
         return {'model': self.model.state_dict(),
@@ -87,9 +110,9 @@ class RegressionModel(Model):
         returns the loss
         """
         x, y = batch
-        pred = self.model(x)
+        pred = self.forward(x)
         self.zero_grad()
-        loss = self.loss_fn(pred.view(-1), y.view(-1))
+        loss = self.loss(pred.view(-1), y.view(-1))
         loss.backward()
         self.optimizer.step()
     
@@ -108,8 +131,8 @@ class RegressionModel(Model):
         """
 
         x, y = batch
-        pred = self.model(x)
-        loss = self.loss_fn(pred.view(-1), y.view(-1))
+        pred = self.forward(x)
+        loss = self.loss(pred.view(-1), y.view(-1))
         return {
             'x': x.detach().cpu().numpy(),
             'y': y.detach().cpu().numpy(),

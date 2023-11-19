@@ -80,9 +80,13 @@ class Trainer(ABC):
         # Optionally load from checkpoint
         if self.load_from_checkpoint:
             self._load_checkpoint()
+
+        self.max_iter_type = 'epoch' if self.num_epochs else 'step'
+
         if self.progress is not None:
             # Initialize progress
-            self.progress.update(self.progress_train, completed=self.step)
+            current_iter = self.epoch if self.max_iter_type=='epoch' else self.step
+            self.progress.update(self.progress_train, completed=current_iter)
         self.logger.start()
         # Set model to train mode
         self.model.train()
@@ -119,13 +123,18 @@ class Trainer(ABC):
         # Logging
         self.log_step(info)
         # Update progress
-        if self.progress is not None:
+        if self.max_iter_type=='step' and (self.progress is not None):
             self.progress.update(self.progress_train, completed=self.step)
+
+        self.progress.update(self.progress_within_epoch, completed=(1.0*self.step%self.steps_per_epoch)/self.steps_per_epoch)
 
     def after_epoch(self, info=None):
         self.epoch += 1
         self.log_epoch(info)
         
+        if self.max_iter_type=='epoch' and (self.progress is not None):
+            self.progress.update(self.progress_train, completed=self.epoch)
+
         # Save checkpoint
         if (self.save_checkpoint_freq is not None) and (self.epoch % self.save_checkpoint_freq == 0) and (self.step > 0):
             self._save_checkpoint(ckpt_state_args={'save_optimizers': True})
@@ -264,15 +273,19 @@ class Trainer(ABC):
             
             # Body: Progress panel
             self.progress = Progress(
-                TextColumn("Training Progress"),
+                TextColumn("[progress.description]{task.description}"),
                 BarColumn(complete_style="dark_sea_green4"),
                 TaskProgressColumn(),
                 TimeElapsedColumn(),
                 TimeRemainingColumn(),
                 MofNCompleteColumn(),
-                redirect_stdout=False
+                redirect_stdout=False,
                 )
-            self.progress_train = self.progress.add_task("[dark_sea_green4] Training...", total=self.max_iters)
+            
+            max_iters = self.num_epochs or self.num_train_steps # use epochs if both given
+
+            self.progress_train = self.progress.add_task("[dark_sea_green4] Training Progress", total=max_iters)
+            self.progress_within_epoch = self.progress.add_task("[dark_sea_green4]\u00A0 \u00A0 Steps", total=1)
 
             if config.get('terminal_display') == 'rich_minimal':
                 # Only a progress bar
@@ -446,8 +459,7 @@ class SupervisedTrainer(Trainer):
         self.num_epochs = num_epochs or self.config.get('num_epochs')
         self.num_train_steps = None
         self.max_iters = self.num_epochs
-        # self.num_train_steps = num_train_steps or self.config.get('num_train_steps')
-        # self.num_train_steps = num_train_steps or self.config.get('num_train_steps')
+        self.steps_per_epoch = len(self.train_data)
     
         self.before_train(trainer_state) # will load trainer checkpoint if needed
         with self.terminal_display:
@@ -474,13 +486,10 @@ class SupervisedTrainer(Trainer):
         """
         assert hasattr(self, 'evaluator') and (self.evaluator is not None), 'Evaluator is not set!'
         if not async_eval:
-            # self.progress_eval.update(0, description='[yellow] Running Evaluation...', completed=0)
             # Update the evaluator's model
             self.evaluator.load_model(state_dict=self.model.state_dict())
             eval_output = self.evaluator.run_eval()
             self.eval_log.append({'step': self.step, 'log': eval_output})
-            # self.progress_eval.update(0, description='[green] Complete!', completed=0)
-            # self.progress_eval.update(0, completed=0)
         else:
             raise NotImplementedError
 

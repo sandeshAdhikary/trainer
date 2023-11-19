@@ -67,7 +67,7 @@ class SimpleSupervisedTrainer(SupervisedTrainer):
     """
 
     def setup_data(self, config):
-        self.train_data = DataLoader(SimpleDataset(mode='train'), batch_size=self.config['batch_size'])
+        self.train_data = DataLoader(SimpleDataset(mode='train'), batch_size=self.config['batch_size'], shuffle=True)
 
     def log_epoch(self, info=None):
         """
@@ -110,7 +110,7 @@ class SimpleSupervisedEvaluator(SupervisedEvaluator):
     """
 
     def setup_data(self):
-        self.dataloader = DataLoader(SimpleDataset(mode='valid'), batch_size=self.config['batch_size'])
+        self.dataloader = DataLoader(SimpleDataset(mode='valid'), batch_size=self.config['batch_size'], shuffle=False)
 
 class SimpleRegressionModel(RegressionModel):
     """
