@@ -1,0 +1,87 @@
+study:
+  storage:
+      type: ssh
+      host: ${oc.env:SSH_HOST}
+      username: ${oc.env:SSH_USERNAME}
+      password: ${oc.env:SSH_PASSWORD}
+      root_dir: ${oc.env:SSH_DIR}/${..name}
+      overwrite: false
+  database:
+      type: mysql
+      name: ${..name} 
+      host: ${oc.env:MYSQL_HOST}
+      username: ${oc.env:MYSQL_USERNAME}
+      password: ${oc.env:MYSQL_PASSWORD}
+  metrics: 
+      prediction_loss:
+        name: prediction_loss
+      prediction:
+        name: prediction
+        module_path: examples.supervised_trainer.modules.PredictionMetric
+trainer:
+  project: ${..project.project}
+  module_path: examples.supervised_trainer.modules.SimpleSupervisedTrainer
+  num_epochs: 20
+  # num_train_steps: 2_000
+  eval_freq: 100
+  batch_size: 32
+  metrics: 
+      prediction_loss:
+        name: prediction_loss
+      model_weights:
+        name: model_weights
+        module_path: examples.supervised_trainer.modules.ModelWeightsMetric
+  evaluator:
+    module_path: examples.supervised_trainer.modules.SimpleSupervisedEvaluator
+    batch_size: 32
+    async_eval: false
+    metrics: 
+        prediction_loss:
+          name: prediction_loss
+        prediction:
+          name: prediction
+          module_path: examples.supervised_trainer.modules.PredictionMetric
+  storage:
+    input:
+      type: ssh
+      root_dir: ${....study.storage.root_dir}
+      sub_dir: train
+      host: ${oc.env:SSH_HOST}
+      username: ${oc.env:SSH_USERNAME}
+      password: ${oc.env:SSH_PASSWORD}
+    output:
+      type: ssh
+      root_dir: ${....study.storage.root_dir}
+      sub_dir: train
+      host: ${oc.env:SSH_HOST}
+      username: ${oc.env:SSH_USERNAME}
+      password: ${oc.env:SSH_PASSWORD}
+model:
+  project: ${..project.project}
+  module_path: examples.supervised_trainer.modules.SimpleRegressionModel
+  input_dim: 6
+  hidden_dim: 32
+  optimizer:
+    name: Adam
+    optimizer_kwargs: {
+      lr: 0.001
+      }
+logger:
+  project: ${..project.project}
+  module_path: trainer.logger.Logger
+  sw: wandb
+  dir: ${oc.env:LOG_DIR}
+  tracked_params: ${model}
+  num_epochs: ${..trainer.num_epochs}
+  # num_train_steps: ${..trainer.num_train_steps}
+  eval_freq: ${..trainer.eval_freq}
+  cleanup: true # delete logdir after training
+  log_freq: 100 # epochs
+sweeper:
+  project: ${..project.project}
+  method: grid
+  sweeper_type: wandb
+  name: ???
+  load_runs_from_queue: true
+  heartbeat_timeout: 5
+  parameters: ???

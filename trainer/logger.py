@@ -23,7 +23,7 @@ class Logger(ABC):
         self.config = self.parse_config(config)
         self.project = config.get('project', 'misc')
         self.dir =  os.path.abspath(config.get('dir', './logdir'))
-        self.video_log_freq = config['video_log_freq']
+        # self.video_log_freq = config['video_log_freq']
         # Make sure self.dir is writable
         if not utils.is_directory_writable(self.dir):
             raise ValueError("Directory %s is not writable!" % self.dir)
@@ -112,12 +112,13 @@ class Logger(ABC):
             config['tags']  = config['tags'] .replace("]", "")
             config['tags']  = [item.strip() for item in config['tags'] .split(',')]
 
-        # Set logger_video_log_freq
-        if config.get('video_log_freq') in [None, 'none', 'None']:
-            # Set logger_video_log_freq so we get max num_video_logs videos per run
-            num_video_logs = config.get('num_video_logs', 5)
-            num_evals = int(config['num_train_steps'] // config['eval_freq'])
-            config['video_log_freq'] = max(int(num_evals / num_video_logs), 1)
+        # if 'video_log_freq' in config.keys() and config.get('video_log_freq') in [None, 'none', 'None']:
+        #     #TODO: Cleaner way to handle this? Maybe don't reference num_train_steps at all?
+        #     #     We're also no longer logging videos in training anyway
+        #     # Set logger_video_log_freq so we get max num_video_logs videos per run
+        #     num_video_logs = config.get('num_video_logs', 5)
+        #     num_evals = int(config['num_train_steps'] // config['eval_freq'])
+        #     config['video_log_freq'] = max(int(num_evals / num_video_logs), 1)
 
         return config
 

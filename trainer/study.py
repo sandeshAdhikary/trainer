@@ -6,8 +6,9 @@ from trainer import Sweeper
 from trainer.rl.rl_evaluator import StudyRLEvaluator
 import os
 from trainer.metrics import Metric
+from abc import ABC
 
-class Study:
+class Study(ABC):
     
     def __init__(self, cfg):
         self.config = cfg
@@ -127,8 +128,6 @@ class Study:
 
     def _make_model(self, config, trainer):
         model_config = self._merge_configs(self.config['model'], config.get('model', {}))
-        # TODO: Avoid having to get env_shapes from trainer
-        model_config.update(trainer.env.get_env_shapes()) # Need env shapes from trainer's env
         model_cls = import_module_attr(model_config['module_path'])
         return model_cls(dict(model_config))
     
@@ -162,6 +161,35 @@ class Study:
     
 
     def _make_evaluator(self, config):
+        raise NotImplementedError
+
+    def _merge_configs(self, orig_cfg, new_cfg, to_dict=True):
+        output_cfg = OmegaConf.merge(orig_cfg, new_cfg)
+        if to_dict:
+            # Convert to a standard (resolved) dictionary object
+            output_cfg = OmegaConf.to_container(output_cfg, resolve=True)
+        return output_cfg
+
+    def _run_evaluation(self, config):
+        evaluator = self._make_evaluator(config)
+        model_config = evaluator.input_storage.load('model_config.yaml', filetype='yaml')
+        model_state_dict = evaluator.input_storage.load_from_archive('ckpt.zip', 
+                                                                        filenames=['model_ckpt.pt'],
+                                                                        filetypes=['torch'])
+        model = self._load_model(model_config, model_state_dict['model_ckpt.pt'])
+        evaluator.set_model(model)
+        evaluator.run_eval()
+
+class RLStudy(Study):
+
+    def _make_model(self, config, trainer):
+        model_config = self._merge_configs(self.config['model'], config.get('model', {}))
+        # TODO: Avoid having to get env_shapes from trainer
+        model_config.update(trainer.env.get_env_shapes()) # Need env shapes from trainer's env
+        model_cls = import_module_attr(model_config['module_path'])
+        return model_cls(dict(model_config))
+
+    def _make_evaluator(self, config):
         evaluator_config = deepcopy(config)
         # evaluator_config = self._merge_configs(self.config['evaluator'], config)
         
@@ -186,23 +214,6 @@ class Study:
             evaluator_config['envs'][env_name]['task_name'] = evaluator_config['task_name']
 
         return StudyRLEvaluator(evaluator_config, db=self.db)
-
-    def _merge_configs(self, orig_cfg, new_cfg, to_dict=True):
-        output_cfg = OmegaConf.merge(orig_cfg, new_cfg)
-        if to_dict:
-            # Convert to a standard (resolved) dictionary object
-            output_cfg = OmegaConf.to_container(output_cfg, resolve=True)
-        return output_cfg
-
-    def _run_evaluation(self, config):
-        evaluator = self._make_evaluator(config)
-        model_config = evaluator.input_storage.load('model_config.yaml', filetype='yaml')
-        model_state_dict = evaluator.input_storage.load_from_archive('ckpt.zip', 
-                                                                        filenames=['model_ckpt.pt'],
-                                                                        filetypes=['torch'])
-        model = self._load_model(model_config, model_state_dict['model_ckpt.pt'])
-        evaluator.set_model(model)
-        evaluator.run_eval()
 
 
 if __name__ == '__main__':

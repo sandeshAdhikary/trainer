@@ -1,0 +1,59 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env" :{
+                "PROJECT_DIR" : "/project",
+                "LOG_DIR" : "/home/sandesh/Repositories/trainer/examples/supervised_trainer/logdir",
+                "SSH_DIR" : "/home/sandesh/studies",
+                "SSH_HOST" : "10.19.137.42",
+                "SSH_USERNAME" : "sandesh",
+                "SSH_PASSWORD" : "Junkiri",
+                "MYSQL_HOST" : "10.19.137.42",
+                "MYSQL_USERNAME" : "sandesh",
+                "MYSQL_PASSWORD" : "Junkiri",
+                "REMOTE_DATA_HOST" : "10.19.137.42",
+                "REMOTE_DATA_USERNAME" : "sandesh",
+                "REMOTE_DATA_PASSWORD" : "Junkiri",
+                "REMOTE_DATA_DIR" : "/home/sandesh/studies/data",
+                "REMOTE_DISTRACTED_DMC_DATASET" : "/home/sandesh/studies/data/distracted_dmc_images.zip",
+                "REMOTE_DRIVING_STEREO_DATASET" : "/home/sandesh/studies/data/driving_stereo_images.zip",
+                "REMOTE_MOVING_MNIST_DATASET" : "/home/sandesh/studies/data/moving_mnist_images.zip",
+                "REMOTE_KINETICS_VIDEOS_DATASET" : "/home/sandesh/studies/data/kinetics_driving_car_videos.zip",
+                "LOCAL_DATA_DIR" : "/project/src/data",
+                "DISTRACTED_DMC_DATASET" : "/project/src/data/distracted_dmc_images",
+                "DRIVING_STEREO_DATASET" : "/project/src/data/driving_stereo_images/*.jpg",
+                "MOVING_MNIST_DATASET" : "/project/src/data/moving_mnist_images/*",
+                "KINETICS_VIDEOS_DATASET" : "/project/src/data/kinetics_driving_car_videos/*",
+            },
+            "args" : [
+                "+study=test_study",
+                "+project=first_project",
+                "+exp=train",
+            ]
+            // "args" : [
+            //     "+study=kinetics_study",
+            //     "+project=walker",
+            //     "+exp=spectral_kinetics",
+            // ]
+            // "args": [
+            //     "--study_config", "src/study/configs/cartpole_study_default.yaml",
+            //     "--run_config", "src/study/configs/cartpole_study_spectral_kinetics.yaml",
+            // ]
+            //     "+project=cartpole",
+            // ]
+            //     "--study_config", "src/study/configs/cartpole_study_default.yaml",
+            //     "--run_config", "src/study/configs/cartpole_study_dbc_kinetics.yaml",
+            // ]
+        }
+    ]
+}

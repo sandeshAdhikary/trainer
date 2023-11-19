@@ -2,72 +2,63 @@ import torch
 from abc import ABC, abstractmethod
 from typing import Dict
 from trainer.model import Model
-import trainer.utils as utils
+from trainer.evaluator import Evaluator
+from trainer import utils
 from trainer.logger import Logger
 from rich.layout import Layout
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import (Progress, MofNCompleteColumn, BarColumn, TextColumn, 
-                           TaskProgressColumn, TimeRemainingColumn, TimeElapsedColumn)
+from rich.progress import (
+    Progress, MofNCompleteColumn, BarColumn, TextColumn,
+    TaskProgressColumn, TimeRemainingColumn, TimeElapsedColumn)
 from rich.columns import Columns
 from rich.live import Live
 from collections import deque
 from warnings import warn
 from contextlib import nullcontext
-# from trainer.utils import register_class
 from trainer.storage import Storage
 import tempfile
+from copy import deepcopy
+from trainer.utils import import_module_attr
+import numpy as np
+from trainer.metrics import Metric
 
 class Trainer(ABC):
 
     def __init__(self, config: Dict, model: Model = None, logger: Logger = None) -> None:
         self.config = self.parse_config(config)
         self._setup(config, model, logger)
-        # self._register_trainer()
+
+    @abstractmethod
+    def setup_data(self, config: Dict) -> None:
+        """
+        """
+        raise NotImplementedError
     
-    def fit(self, num_train_steps: int=None, trainer_state=None) -> None:
-        self.num_train_steps = num_train_steps or self.config['num_train_steps']
+    @abstractmethod
+    def fit(self, num_train_steps: int=None, num_epochs: int=None, trainer_state=None) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def evaluate(self):
+        raise NotImplementedError
     
-        self.before_train(trainer_state) # will load trainer checkpoint if needed
-        with self.terminal_display:
-            while not self.train_end:
-                self.before_epoch()
-                # Run training epoch
-                for batch_idx, batch in enumerate(self.train_data):
-                    self.before_step()
-                    self.train_step(batch, batch_idx)
-                    self.after_step()
-                self.evaluate(self.eval_data, training_mode=True)
-                self.after_epoch()
-                
-        self.after_train() 
-    
+    @abstractmethod
+    def _setup_metric_loggers(self, config, metrics=None):
+        """
+        Define metrics that need to be logged from training data
+        """
+        raise NotImplementedError
 
     def train_step(self, batch, batch_idx=None):
         train_step_output = self.model.training_step(batch, batch_idx)
         self.train_log.append({'step': self.step, 'log': train_step_output})
-
-    def evaluate(self, eval_data=None, trainer_mode=False):
-        raise NotImplementedError
     
     def set_model(self, model: Model) -> None:
         self.model = model
 
     def set_logger(self, logger: Logger) -> None:
         self.logger = logger
-
-    @abstractmethod
-    def setup_data(self, config: Dict) -> None:
-        """
-        Setup the dataset
-        e.g. 
-        self.data = {
-        'train': train_dataset/dataloader,
-        'eval': eval_dataset/dataloader,
-        'replay_buffer': replay_buffer,
-        }
-        """
-        self.data = None
 
     def before_train(self, trainer_state: Dict =None, info=None):
         """
@@ -108,21 +99,28 @@ class Trainer(ABC):
                                  filetype='yaml')
 
 
+        if self.num_epochs is not None:
+            self.current_iter = self.epoch
+        elif self.num_train_steps is not None:
+            self.current_iter = self.step
+        else:
+            raise ValueError("Either num_epochs or num_train_steps must be defined")
 
     def before_epoch(self, info=None):
         pass
-    
+
     def before_step(self, info=None):
         self.model.train() # Set model to training mode
 
-    def after_train(self, info=None):
-        """
-        Callbacks after training ends
-        """
-        # Close logger
-        # Close any open connections
-        self.log_train(info)
-        self.logger.finish()
+    def after_step(self, info=None):
+        self.step += 1
+        # Update trainer state
+        self.update_trainer_state()
+        # Logging
+        self.log_step(info)
+        # Update progress
+        if self.progress is not None:
+            self.progress.update(self.progress_train, completed=self.step)
 
     def after_epoch(self, info=None):
         self.epoch += 1
@@ -134,43 +132,43 @@ class Trainer(ABC):
             self.num_checkpoint_saves += 1
             self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint/num_checkpoint_saves': self.num_checkpoint_saves})
 
-
-    def after_step(self, info=None):
-        # Update trainer state
-        self.update_trainer_state()
-        # Logging
-        self.log_step(info)
-        # Update progress
-        if self.progress is not None:
-            self.progress.update(self.progress_train, completed=self.step)
+    def after_train(self, info=None):
+        """
+        Callbacks after training ends
+        """
+        # Close logger
+        # Close any open connections
+        self.log_train(info)
+        self.logger.finish()
 
 
     def log_step(self, info=None):
         """
-        Log using self.train_log and self.eval_log
-        self.*_log = deque({'step': int, 'output': Dict})
+        Log using self.logger after step
         """
         pass
 
     def log_epoch(self, info=None):
+        """
+        Log using self.logger after epoch
+        """
         pass
 
     def log_train(self, info=None):
+        """
+        Log using self.logger after train
+        """
         pass
 
 
-
     def update_trainer_state(self):
-        # Check if training is complete
-        if self.step >= self.num_train_steps:
-            self.train_end = True
-
+        if self.num_epochs is not None:
+            self.train_end = self.epoch >= self.num_epochs
+        elif self.num_train_steps is not None:
+            self.train_end = self.step >= self.num_train_steps
 
     #############################
-    
-    # @property
-    # def module_path(self):
-    #     return None
+
     
     def _set_storage(self):
         # Update project and run_id for stroage defs
@@ -225,9 +223,33 @@ class Trainer(ABC):
         self.logger = logger
         self._set_seeds(config)
         self.setup_data(config)
+        self._setup_metric_loggers(config)
+        
 
     def setup_evaluator(self):
-        raise NotImplementedError
+        evaluator_config = self.config['evaluator']
+        eval_storage_config = {}
+        # Evaluator's input storage need to load checkpoints
+        # So, it's set to trainer's output storage
+        eval_storage_config['input'] = deepcopy(self.config['storage']['output'])
+        # Evaluator will store results in trainer's output storage
+        eval_storage_config['output'] = deepcopy(self.config['storage']['output'])
+        evaluator_config['storage'] = eval_storage_config
+
+        # Add project and run info
+        evaluator_config.update({
+            'project': self.project,
+            'run': self.run,
+        })
+
+        # evaluator_cls = self.config.get('module_path', Evaluator)
+        evaluator_cls = self.config['evaluator'].get('module_path')
+        if evaluator_cls is not None:
+            self.evaluator = import_module_attr(evaluator_cls)(evaluator_config)
+        else:
+            self.evaluator = Evaluator(evaluator_config)
+
+        self.evaluator.set_model(self.model)
 
     def _setup_terminal_display(self, config: Dict) -> None:
             
@@ -250,7 +272,7 @@ class Trainer(ABC):
                 MofNCompleteColumn(),
                 redirect_stdout=False
                 )
-            self.progress_train = self.progress.add_task("[dark_sea_green4] Training...", total=self.num_train_steps)
+            self.progress_train = self.progress.add_task("[dark_sea_green4] Training...", total=self.max_iters)
 
             if config.get('terminal_display') == 'rich_minimal':
                 # Only a progress bar
@@ -407,17 +429,124 @@ class Trainer(ABC):
         trainer_state = self._get_trainer_state()
         ckpt_state = {
             'trainer': trainer_state,
-            'model': self.model.state_dict(save_optimizers=save_optimizers),
+            'model': self.model.state_dict(include_optimizers=save_optimizers),
         }
         return ckpt_state
 
-if __name__ == "__main__":
-    import yaml
-    with open('trainer/test_config.yaml') as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
-    
-    model = Model(config['model'])
-    logger = Logger(config['logger'])
-    trainer = Trainer(config['trainer'], model, logger)
 
-    trainer.train(config['trainer']['num_train_steps'])
+class SupervisedTrainer(Trainer):
+    """
+    Trainer class for supervised learning
+    """
+    
+    def fit(self, num_epochs: int=None, trainer_state=None) -> None:
+        assert hasattr(self, 'train_data') and (self.train_data is not None)
+
+        # Use num_epochs instead of num_train_steps
+        self.num_epochs = num_epochs or self.config.get('num_epochs')
+        self.num_train_steps = None
+        self.max_iters = self.num_epochs
+        # self.num_train_steps = num_train_steps or self.config.get('num_train_steps')
+        # self.num_train_steps = num_train_steps or self.config.get('num_train_steps')
+    
+        self.before_train(trainer_state) # will load trainer checkpoint if needed
+        with self.terminal_display:
+            while not self.train_end:
+                self.before_epoch()
+                # Run training epoch
+                for batch_idx, batch in enumerate(self.train_data):
+                    print(batch_idx/len(self.train_data))
+                    print(f"Epoch : {self.epoch}")
+                    self.before_step()
+                    self.train_step(batch, batch_idx)
+                    self.after_step()
+                    if self.train_end:
+                        break
+                self.evaluate()
+                self.after_epoch()     
+        self.after_train() 
+
+
+    def evaluate(self, async_eval=False):
+        """"
+        Evaluation outputs are written onto a global dict
+        to allow for asynchronous evaluation
+        """
+        assert hasattr(self, 'evaluator') and (self.evaluator is not None), 'Evaluator is not set!'
+        if not async_eval:
+            # self.progress_eval.update(0, description='[yellow] Running Evaluation...', completed=0)
+            # Update the evaluator's model
+            self.evaluator.load_model(state_dict=self.model.state_dict())
+            eval_output = self.evaluator.run_eval()
+            self.eval_log.append({'step': self.step, 'log': eval_output})
+            # self.progress_eval.update(0, description='[green] Complete!', completed=0)
+            # self.progress_eval.update(0, completed=0)
+        else:
+            raise NotImplementedError
+
+    def _setup_metric_loggers(self, config, metrics=None):
+        """
+        Trainer metric is prediction error
+        """
+        self.metrics = {}
+        config_metrics = config.get('metrics') or self._default_metric_config
+        for metric_name, metric_config in config_metrics.items():
+            self.metrics[metric_name] = Metric(metric_config)
+
+    @property
+    def _default_metric_config(self):
+        return {
+            'prediction_loss': {
+                'name': 'prediction_loss',
+                'type': 'scalar',
+                'temporal': 'true',
+                'table_spec': 'null'
+                }
+                }
+
+    def log_epoch(self, info=None):
+        """
+        Log values from self.train_log and self.eval_log
+        Optionally, additional info may be provided via `info`
+        """
+
+        # Train log
+        train_data = [log['log'] for log in self.train_log]
+        train_metrics = self._get_metrics(train_data, self.metrics, 
+                                          storage=self.output_storage)
+        self.logger.log(log_dict={
+            'trainer_step': self.step,
+            'train/loss_avg': train_metrics['prediction_loss']['avg'],
+            'train/loss_std': train_metrics['prediction_loss']['std'],
+        })
+
+        # Eval log
+        eval_data = [log['log'] for log in self.eval_log]
+        eval_metrics = self._get_metrics(eval_data, self.evaluator.metrics, 
+                                         storage=self.evaluator.output_storage)
+        self.logger.log(log_dict={
+            'eval_step': self.step,
+            'eval/loss_avg': eval_metrics['prediction_loss']['avg'],
+            'eval/loss_std': eval_metrics['prediction_loss']['std'],
+        })
+
+
+    def _get_metrics(self, input_data, metrics, storage=None):
+
+        # train_storage = self.output_storage
+
+        data = {}
+        for key in input_data[0].keys():
+            data[key] = [x[key] for x in input_data]
+            if isinstance(data[key][0], np.ndarray):
+                data[key] = np.concatenate(data[key])
+
+        metrics_dict = {}
+        for metric_name, metric in metrics.items():
+            if metric.type in ['image', 'video']:
+                # If image or video, need storage so files can be saved
+                metrics_dict[metric_name] = metric.log(data, storage)
+            else:
+                metrics_dict[metric_name] = metric.log(data)
+        
+        return metrics_dict

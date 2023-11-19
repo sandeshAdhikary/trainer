@@ -164,7 +164,6 @@ class RLTrainer(Trainer, ABC):
         eval_storage_config = {}
         eval_storage_config['input'] = deepcopy(self.config['storage']['output'])
         # Evaluator will store results in trainer's output storage
-        # but inside a separate eval folder
         eval_storage_config['output'] = deepcopy(self.config['storage']['output'])
         evaluator_config = {
             'project': self.project,

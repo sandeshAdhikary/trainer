@@ -8,32 +8,9 @@ import string
 import random 
 import pandas as pd
 import altair as alt
-from trainer.utils import pretty_title, COLORS
+from trainer.utils import pretty_title, COLORS, import_module_attr
 
 ALPHABETS = list(string.ascii_lowercase)
-
-class Metric:
-    def __new__(cls, config):
-        
-        # If the metric is a built-in metric, return the corresponding class
-        metric_name = config.get('name')
-        if metric_name == 'avg_episode_reward':
-            return AvgEpisodeReward(config)
-        elif metric_name == 'episode_rewards':
-            return EpisodeRewards(config)
-        elif metric_name == 'observation_videos':
-            return ObservationVideos(config)
-
-        # Create a new metric based on type
-        metric_type = config['type']
-        temporal = config['temporal']
-        if metric_type=='scalar':
-            if temporal:
-                return TemporalScalarMetric(config)
-            else:
-                return StaticScalarMetric(config)
-        else:
-            raise NotImplementedError()
 
 class StaticMetric():
     """
@@ -389,3 +366,58 @@ class EpisodeRewards(TemporalScalarMetric):
             'std': np.nanstd(rews, axis=1) # Std across envs
         }
     
+class PredictionErrorMetric(StaticScalarMetric):
+
+    def log(self, eval_output):
+        """
+        return MSE prediction error from eval_output
+        """
+        
+        pred_errs = (eval_output['preds'].reshape(-1) - eval_output['y'].reshape(-1))**2
+        return {
+            'avg':  np.nanmean(pred_errs), # Mean across batches
+            'std': np.nanstd(pred_errs) # Std across batches
+        }
+
+
+DEFAULT_METRICS = {
+    'avg_episode_reward': AvgEpisodeReward,
+    'episode_rewards': EpisodeRewards,
+    'observation_videos': ObservationVideos,
+    'prediction_loss': PredictionErrorMetric
+    }
+
+class Metric:
+    
+    def __new__(cls, config):
+        
+        # If the metric is a built-in metric, return the corresponding class
+        metric_name = config.get('name')
+        if metric_name in DEFAULT_METRICS.keys():
+            return DEFAULT_METRICS[metric_name](config)
+        elif config.get('module_path') is not None:
+            # Load the metric from the module path
+            return import_module_attr(config['module_path'])(config)
+        else:
+            raise ValueError(f"""Metric {metric_name} is not a default metric.
+                             Please provide a module_path
+                             """)
+        # if metric_name == 'avg_episode_reward':
+        #     return AvgEpisodeReward(config)
+        # elif metric_name == 'episode_rewards':
+        #     return EpisodeRewards(config)
+        # elif metric_name == 'observation_videos':
+        #     return ObservationVideos(config)
+        # elif metric_name == 'prediction_loss':
+        #     return PredictionErrorMetric(config)
+
+        # # Create a new metric based on type
+        # metric_type = config['type']
+        # temporal = config['temporal']
+        # if metric_type=='scalar':
+        #     if temporal:
+        #         return TemporalScalarMetric(config)
+        #     else:
+        #         return StaticScalarMetric(config)
+        # else:
+        #     raise NotImplementedError()

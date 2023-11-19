@@ -8,6 +8,11 @@ dependencies:
   - mysqlclient
   - pip
   - pip:
+    - altair
+    - pandas
+    - mysql-connector-python
+    - envyaml
+    - paramiko
     - chardet
     - gym
     - pillow==9.4.0
@@ -19,3 +24,5 @@ dependencies:
     - matplotlib
     - wandb
     - sqlalchemy
+    - omegaconf
+    - hydra-core
