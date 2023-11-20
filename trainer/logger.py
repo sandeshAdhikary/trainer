@@ -11,6 +11,7 @@ import shutil
 from tempfile import TemporaryDirectory
 from datetime import datetime
 import subprocess
+import torch
 
 class Logger(ABC):
     def __init__(self, config: Dict, run=None) -> None:
@@ -225,7 +226,9 @@ class Logger(ABC):
                 restore_error = True
         return restore_error
 
-    def _try_sw_log_video(self, key, frames, step, image_mode='hwc'):
+    def _try_sw_log_video(self, key, frames, step=None, image_mode='hwc'):
+        if step is None:
+            step = self._sw.step
         if self.sw_type == 'tensorboard':
             raise NotImplementedError("Tensorboard logger not implemented")
         elif self.sw_type == 'wandb':
@@ -239,20 +242,18 @@ class Logger(ABC):
 
     
 
-    # def _try_sw_log_image(self, key, image, step, image_mode='hwc'):
-    #     if self.sw_type == 'tensorboard':
-    #         if not torch.is_tensor(image):
-    #             image = torch.from_numpy(image)
-    #         assert image.dim() == 3
-    #         grid = torchvision.utils.make_grid(image.unsqueeze(0))
-    #         self._sw.add_image(key, grid, step)
-    #     elif self.sw_type == 'wandb':
-    #         if image_mode == 'chw':
-    #             image = rearrange(image, 'c h w -> h w c')
-    #         if torch.is_tensor(image):
-    #             image = image.detach().cpu().numpy()
-    #         image = image[:,::self.img_downscale_factor,::self.img_downscale_factor]
-    #         self._sw.log({key: [wandb.Image(image)]}, step=step)
+    def _try_sw_log_image(self, key, image, step=None, image_mode='hwc'):
+        if step is None:
+            step = self._sw.step
+        if self.sw_type == 'tensorboard':
+            raise NotImplementedError("Tensorboard logger not implemented")
+        elif self.sw_type == 'wandb':
+            if torch.is_tensor(image):
+                image = image.detach().cpu().numpy()
+            image = image[:,::self.img_downscale_factor,::self.img_downscale_factor]
+            if image_mode == 'chw':
+                image = rearrange(image, 'c h w -> h w c')
+            self._sw.log({key: [wandb.Image(image)]}, step=step)
 
 
 
@@ -297,9 +298,8 @@ class Logger(ABC):
     #         if hasattr(param.bias, 'grad') and param.bias.grad is not None:
     #             self.log_histogram(key + '_b_g', param.bias.grad.data, step)
 
-    # def log_image(self, key, image, step, image_mode='hwc'):
-    #     assert key.startswith('train') or key.startswith('eval')
-    #     self._try_sw_log_image(key, image, step, image_mode)
+    def log_image(self, key, image, step=None, image_mode='hwc'):
+        self._try_sw_log_image(key, image, step=step, image_mode=image_mode)
 
 
 

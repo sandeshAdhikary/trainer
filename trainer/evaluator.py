@@ -127,10 +127,10 @@ class SupervisedEvaluator(Evaluator):
             if batch_idx == 0:
                 for k, v in eval_step_output.items():
                     tracked_data[k] = []
-            else:
-                for k, v in eval_step_output.items():
-                    tracked_data[k].append(v)
-        
+            
+            for k, v in eval_step_output.items():
+                tracked_data[k].append(v)
+    
         # Concatenate arrays in tracked data
         for k, v in tracked_data.items():
             if isinstance(v[0], np.ndarray):

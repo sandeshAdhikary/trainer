@@ -8,6 +8,7 @@ dependencies:
   - mysqlclient
   - pip
   - pip:
+    - nvitop
     - altair
     - pandas
     - mysql-connector-python

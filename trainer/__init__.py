@@ -4,7 +4,7 @@ from trainer.trainer import (
     )
 from trainer.logger import Logger
 from trainer.model import (
-    Model, RegressionModel
+    Model, RegressionModel, EncoderModel
 )
 from trainer.evaluator import (
     Evaluator, SupervisedEvaluator

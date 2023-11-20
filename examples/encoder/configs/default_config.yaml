@@ -13,34 +13,28 @@ study:
       username: ${oc.env:MYSQL_USERNAME}
       password: ${oc.env:MYSQL_PASSWORD}
   metrics: 
-      prediction_loss:
-        name: prediction_loss
-      prediction:
-        name: prediction
-        module_path: examples.supervised_trainer.modules.PredictionMetric
+      loss:
+        name: loss
 trainer:
   project: ${..project.project}
-  module_path: examples.supervised_trainer.modules.SimpleSupervisedTrainer
-  num_epochs: 20
+  module_path: examples.encoder.modules.SimpleEncoderTrainer
+  num_epochs: 4_000
   terminal_display: rich
-  # num_train_steps: 2_000
-  eval_freq: 100
-  batch_size: 32
+  eval_freq: 20
+  batch_size: 400
+  save_checkpoint_freq: 2_000
   metrics: 
-      prediction_loss:
-        name: prediction_loss
+      loss:
+        name: loss
       model_weights:
         name: model_weights
   evaluator:
-    module_path: examples.supervised_trainer.modules.SimpleSupervisedEvaluator
-    batch_size: 32
+    module_path: examples.encoder.modules.SimpleSupervisedEvaluator
+    batch_size: 400
     async_eval: false
     metrics: 
-        prediction_loss:
-          name: prediction_loss
-        prediction:
-          name: prediction
-          module_path: examples.supervised_trainer.modules.PredictionMetric
+        loss:
+          name: loss
   storage:
     input:
       type: ssh
@@ -58,9 +52,14 @@ trainer:
       password: ${oc.env:SSH_PASSWORD}
 model:
   project: ${..project.project}
-  module_path: examples.supervised_trainer.modules.SimpleRegressionModel
-  input_dim: 6
-  hidden_dim: 32
+  module_path: examples.encoder.modules.SimpleEncoderModel
+  ortho_loss_reg: 0.001
+  input_dim: 2
+  hidden_dim: 16
+  grid_size: 20
+  encoder_dim: 5
+  loss_type: spectralnet
+  bandwidth: 0.001
   optimizer:
     name: Adam
     optimizer_kwargs: {

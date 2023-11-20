@@ -140,3 +140,64 @@ class RegressionModel(Model):
             'loss': loss.view(-1).detach().cpu().numpy()
         }
     
+
+class EncoderModel(Model):
+    """
+    Base class for regression models.
+    Assumes:
+        1. batch = (x, y) or just (x)
+        2. model(x) returns a vecror output (encoding)
+    """
+
+    def __init__(self, config, model, optimizer, loss_fn):
+        super().__init__(config, model, optimizer, loss_fn)
+
+    def training_step(self, batch, batch_idx):
+        """
+        Compute single training_step for a given batch, and update model parameters
+        returns the loss
+        """
+        if len(batch) == 2:
+            # Target provided
+            x, y = batch
+        else:
+            # Targett may not be provided
+            x = batch
+            y = None
+
+        pred = self.forward(x)
+        self.zero_grad()
+        loss = self.loss(x, pred, y)
+        loss.backward()
+        self.optimizer.step()
+    
+        return {
+            'x': x.detach().cpu().numpy(),
+            'y': y.detach().cpu().numpy() if y is not None else y,
+            'preds': pred.detach().cpu().numpy(),
+            'loss': loss.view(-1).detach().cpu().numpy(),
+            'model': self.state_dict(include_optimizers=False)
+        }
+
+    def evaluation_step(self, batch, batch_idx):
+        """
+        Compute single evaluation step for a given batch
+        returns: output dict with keys x, y, preds, loss
+        """
+
+        if len(batch) == 2:
+            # Target provided
+            x, y = batch
+        else:
+            # Targett may not be provided
+            x = batch
+            y = None
+
+        pred = self.forward(x)
+        loss = self.loss(x, pred, y)
+        return {
+            'x': x.detach().cpu().numpy(),
+            'y': y.detach().cpu().numpy() if y is not None else y,
+            'preds': pred.detach().cpu().numpy(),
+            'loss': loss.view(-1).detach().cpu().numpy()
+        }

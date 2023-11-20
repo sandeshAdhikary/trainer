@@ -16,7 +16,7 @@ class SimpleDataset(Dataset):
     """
     
     DATA_PATHS = {
-        'train':'examples/supervised_trainer/data/valid_data.npy',
+        'train':'examples/supervised_trainer/data/train_data.npy',
         'valid':'examples/supervised_trainer/data//valid_data.npy',
         'test':'examples/supervised_trainer/data/test_data.npy'
     }

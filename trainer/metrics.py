@@ -379,12 +379,47 @@ class PredictionErrorMetric(StaticScalarMetric):
             'std': np.nanstd(pred_errs) # Std across batches
         }
 
+class LossMetric(StaticScalarMetric):
+    def log(self, eval_output):
+        """
+        retrun avg and std loss
+        """
+        
+        return {
+            'avg':  np.nanmean(eval_output['loss']), # Mean across batches
+            'std': np.nanstd(eval_output['loss']) # Std across batches
+        }
+
+class ModelWeightsMetric(StaticScalarMetric):
+    def log(self, data):
+        """
+        assumes data has key 'model' with dict of model weights
+        return a dict of form:
+         {param_name: {'avg': avg_weight, 'std': std_weight}
+         for all params in data['model']
+        """
+        
+        # Compute average weights
+        model_weights = [x['model'] for x in data['model']]
+        output = {k: {'avg': [], 'std': []} for k in model_weights[0].keys()}
+        for key in output.keys():
+            param_weights = []
+            for idx in range(len(model_weights)):
+                param_weights.append(model_weights[idx][key].detach().cpu().numpy())
+            param_weights = np.concatenate(param_weights)
+            output[key]['avg'] = np.mean(param_weights)
+            output[key]['std'] = np.std(param_weights)
+        
+        return output
+
 
 DEFAULT_METRICS = {
     'avg_episode_reward': AvgEpisodeReward,
     'episode_rewards': EpisodeRewards,
     'observation_videos': ObservationVideos,
-    'prediction_loss': PredictionErrorMetric
+    'prediction_loss': PredictionErrorMetric,
+    'model_weights': ModelWeightsMetric,
+    'loss': LossMetric
     }
 
 class Metric:

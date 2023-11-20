@@ -1,0 +1,6 @@
+exp_mode: sweep
+sweeper:
+  name: sweep_1
+  parameters:
+    trainer:
+      seed: {values: [1, 2, 3]}

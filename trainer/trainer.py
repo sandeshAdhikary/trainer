@@ -22,6 +22,7 @@ from copy import deepcopy
 from trainer.utils import import_module_attr
 import numpy as np
 from trainer.metrics import Metric
+from nvitop.callbacks.utils import get_gpu_stats, get_devices_by_logical_ids
 
 class Trainer(ABC):
 
@@ -65,7 +66,8 @@ class Trainer(ABC):
         Callbacks before training starts
         """
         self.init_trainer_state(trainer_state)
-        
+        self.max_iter_type = 'epoch' if self.num_epochs else 'step'
+
         # Make sure the model and logger are set
         assert self.model is not None, "Model not set. Use trainer.set_model(model) to do so."
         assert self.logger is not None, "Logger not set. Use trainer.set_logger(logger) to do so"
@@ -81,7 +83,6 @@ class Trainer(ABC):
         if self.load_from_checkpoint:
             self._load_checkpoint()
 
-        self.max_iter_type = 'epoch' if self.num_epochs else 'step'
 
         if self.progress is not None:
             # Initialize progress
@@ -126,7 +127,10 @@ class Trainer(ABC):
         if self.max_iter_type=='step' and (self.progress is not None):
             self.progress.update(self.progress_train, completed=self.step)
 
-        self.progress.update(self.progress_within_epoch, completed=(1.0*self.step%self.steps_per_epoch)/self.steps_per_epoch)
+        if self.max_iter_type == 'epoch':
+            completed = (1.0*self.step%self.steps_per_epoch)/self.steps_per_epoch
+            self.progress.update(self.progress_within_epoch, completed=completed)
+                
 
     def after_epoch(self, info=None):
         self.epoch += 1
@@ -233,6 +237,9 @@ class Trainer(ABC):
         self._set_seeds(config)
         self.setup_data(config)
         self._setup_metric_loggers(config)
+
+        # To track gpu stats
+        self.gpu_devices = get_devices_by_logical_ids(range(torch.cuda.device_count()))
         
 
     def setup_evaluator(self):
@@ -283,16 +290,18 @@ class Trainer(ABC):
                 )
             
             max_iters = self.num_epochs or self.num_train_steps # use epochs if both given
-
-            self.progress_train = self.progress.add_task("[dark_sea_green4] Training Progress", total=max_iters)
-            self.progress_within_epoch = self.progress.add_task("[dark_sea_green4]\u00A0 \u00A0 Steps", total=1)
+            if self.max_iter_type == "epoch":
+                self.progress_train = self.progress.add_task("[dark_sea_green4] Training [Epochs]", total=max_iters)
+                self.progress_within_epoch = self.progress.add_task("[dark_sea_green4] Training [Steps]", total=1)
+            else:
+                self.progress_train = self.progress.add_task("[dark_sea_green4] Training [Steps]", total=max_iters)
 
             if config.get('terminal_display') == 'rich_minimal':
                 # Only a progress bar
                 self.terminal_display = self.progress
             else:
                 # Full terminal display
-                self._term_progress_panel = Panel.fit(Columns([self.progress]), title="Training", border_style="dark_sea_green4")
+                self._term_progress_panel = Panel.fit(Columns([self.progress]), title="Trainer", border_style="dark_sea_green4")
                 # Footer: Misc info
                 self._term_footer_text = f"""[bold]Device[/]: {self.device}"""
                 self._term_footer_panel = Panel(self._term_footer_text, title="Info", border_style='misty_rose1')
@@ -467,8 +476,6 @@ class SupervisedTrainer(Trainer):
                 self.before_epoch()
                 # Run training epoch
                 for batch_idx, batch in enumerate(self.train_data):
-                    print(batch_idx/len(self.train_data))
-                    print(f"Epoch : {self.epoch}")
                     self.before_step()
                     self.train_step(batch, batch_idx)
                     self.after_step()
