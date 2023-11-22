@@ -96,12 +96,19 @@ class SimpleEncoderTrainer(SupervisedTrainer):
             true_eigvecs = rearrange(true_eigvecs, '(r1 c1) d -> r1 c1 d', r1=self.model.grid_size)
 
             # get plots of the top-n eigenvectors vs encodings
-            max_viz_dim = 5
+            max_viz_dim = min(encodings.shape[-1], 10)
             for idx in range(max_viz_dim):
                 encoding = self.make_heatmap(encodings[:,:,idx])
                 eigvec = self.make_heatmap(true_eigvecs[:,:,idx].numpy())
                 img = make_grid([torch.from_numpy(encoding), torch.from_numpy(eigvec)], nrow=1)
                 self.logger.log_image(f'eval/encodigs_{idx}', img, image_mode='chw')
+
+
+        if self.epoch == 1:
+            # Plot the kernel/weights
+            weights = rearrange(self.model.precomp_kernel, 'r1 c1 r2 c2 -> (r1 c1) (r2 c2)')
+            weights = self.make_heatmap(weights)
+            self.logger.log_image(f'target/weights', weights, image_mode='chw')
 
     def make_heatmap(self, array, cmap='viridis', img_mode='chw'):
         """
@@ -173,7 +180,8 @@ class SimpleEncoderModel(EncoderModel):
             x = x.to(self.device)
         h = self.model(x) # (B, d)
         # L2-batch normalization
-        sigma = torch.norm(h, p=2, dim=0, keepdim=True) / np.sqrt(h.shape[0])
+        # sigma = torch.norm(h, p=2, dim=0, keepdim=True) / np.sqrt(h.shape[0])
+        sigma = torch.einsum('bd,bd->d', h, h)
         h = h / sigma
         return h
 
@@ -185,7 +193,10 @@ class SimpleEncoderModel(EncoderModel):
         D = torch.diag(W.sum(dim=1))
         L = D - W
         # Get eigenecs
-        eigvals, eigvecs = torch.linalg.eigh(L)
+        # eigvals, eigvecs = torch.linalg.eigh(L)
+        eigvals, eigvecs = torch.lobpcg(L, k=self.config['encoder_dim'], B = D, largest=False, )
+        # Solves Ax=\lambda Bx,
+        # We want to solve L x = \lambda D x
         eigvecs = rearrange(eigvecs, '(r1 c1) d -> r1 c1 d', r1=self.grid_size)
         return eigvecs
 
@@ -202,9 +213,10 @@ class SimpleEncoderModel(EncoderModel):
             W = rearrange(self.precomp_kernel, 'r1 c1 r2 c2 -> (r1 c1) (r2 c2)')
             W = torch.from_numpy(W).to(encodings.device).to(encodings.dtype)
             batch_size = W.shape[0]
-
+            
             D = torch.sum(W, dim=1)
             h = encodings/D[:, None]
+                # h = encodings
 
             Dh = torch.cdist(h,h,p=2)
             dist_loss = torch.sum(W * Dh.pow(2)) / (batch_size**2)
@@ -258,13 +270,13 @@ class SimpleEncoderModel(EncoderModel):
     def get_precomp_kernel(self):
         # obstacles = np.concatenate(
         #     [
-        #         np.array([(int(self.grid_size/2), x) for x in range(self.grid_size)]),
-        #         np.array([(x, int(self.grid_size/2)) for x in range(self.grid_size)]),
+        #         np.array([(int(self.grid_size/2), x) for x in range(self.grid_size) if x not in [4,5,6,7]]),
+        #         np.array([(x, int(self.grid_size/2)) for x in range(self.grid_size) if x not in [4,5,6,7]]),
         #     ]
         #     )
         obstacles = None
 
-        self.neighbor_eps = 1
+        self.neighbor_eps = 20
         dist_mat = np.zeros((self.grid_size, self.grid_size, self.grid_size, self.grid_size))
         for r1 in trange(self.grid_size):
             for c1 in range(self.grid_size):
@@ -275,13 +287,12 @@ class SimpleEncoderModel(EncoderModel):
                             dist_mat[r1,c1,r2,c2] = 0.0
                         else:
                             if obstacles is not None:
-                                obs1 = [r1, c1] in zip(*np.where(obstacles == [r1,c1]))
-                                obs2 = [r2,c2] in zip(*np.where(obstacles == [r2,c2]))
-                                if obs1 or obs2:
+                                if [r1,c1] in obstacles.tolist() or [r2,c2] in obstacles.tolist():
+                                    dist_mat[r1,c1,r2,c2] = np.inf
                                     continue
 
                             if (abs((r2 - r1)) <= self.neighbor_eps) and (abs((c2 - c1)) <= self.neighbor_eps):
                                 dist_mat[r1,c1,r2,c2] = np.sqrt((r1-r2)**2 + (c1-c2)**2)
-        kernel = np.exp(-(dist_mat**2)/self.bandwidth)
+        kernel = np.exp(-(dist_mat**2)/(2*self.bandwidth**2))
                             
         return kernel

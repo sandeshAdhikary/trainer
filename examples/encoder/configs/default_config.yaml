@@ -18,11 +18,11 @@ study:
 trainer:
   project: ${..project.project}
   module_path: examples.encoder.modules.SimpleEncoderTrainer
-  num_epochs: 4_000
+  num_epochs: 1_000_000
   terminal_display: rich
   eval_freq: 20
   batch_size: 400
-  save_checkpoint_freq: 2_000
+  save_checkpoint_freq: 1_000_000
   metrics: 
       loss:
         name: loss
@@ -53,13 +53,13 @@ trainer:
 model:
   project: ${..project.project}
   module_path: examples.encoder.modules.SimpleEncoderModel
-  ortho_loss_reg: 0.001
+  ortho_loss_reg: 0.01
   input_dim: 2
   hidden_dim: 16
   grid_size: 20
-  encoder_dim: 5
-  loss_type: spectralnet
-  bandwidth: 0.001
+  encoder_dim: 8
+  loss_type: neuralef
+  bandwidth: 1.0
   optimizer:
     name: Adam
     optimizer_kwargs: {
@@ -75,7 +75,7 @@ logger:
   # num_train_steps: ${..trainer.num_train_steps}
   eval_freq: ${..trainer.eval_freq}
   cleanup: true # delete logdir after training
-  log_freq: 100 # epochs
+  log_freq: 100_000 # epochs
 sweeper:
   project: ${..project.project}
   method: grid
