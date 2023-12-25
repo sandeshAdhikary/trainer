@@ -16,7 +16,7 @@ class Evaluator():
         self.model_name = self.config.get('model_name', 'model_checkpoint.pt')
         self.saved_model_type = self.config.get('saved_model_type', 'torch')
         self._set_storage()
-        self.setup_data()
+        self.setup_data(config)
         self._setup_metric_loggers(self.config, metrics)
         self._setup_terminal_display(self.config)
 
@@ -98,7 +98,7 @@ class Evaluator():
         self.tmp_root_dir.cleanup()
         
     @abstractmethod
-    def setup_data(self):
+    def setup_data(self, config=None):
         raise NotImplementedError
     
     def _setup_metric_loggers(self, config, metrics=None):

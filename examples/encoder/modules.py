@@ -26,7 +26,7 @@ class EncoderDataset(Dataset):
     }
 
     def __init__(self, mode='train'):
-        self.data = np.load(self.DATA_PATHS[mode]).astype(np.float32)
+        self.data = np.load(self.DATA_PATHS[mode]).astype(np.float64)
 
     def __getitem__(self, index):
         """
@@ -135,7 +135,7 @@ class SimpleSupervisedEvaluator(SupervisedEvaluator):
     Simple evaluator
     """
 
-    def setup_data(self):
+    def setup_data(self, config):
         self.dataloader = DataLoader(EncoderDataset(mode='train'), batch_size=self.config['batch_size'], shuffle=False)
 
     
@@ -157,6 +157,7 @@ class SimpleEncoderModel(EncoderModel):
             nn.ReLU(),
             nn.Linear(config['hidden_dim'], config['encoder_dim'])
         )
+        model = model.double()
         # Define the optimizer
         optimizer = Adam(model.parameters(), 
                             **config['optimizer']['optimizer_kwargs'])

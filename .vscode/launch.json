@@ -39,6 +39,7 @@
                 "+study=test_study",
                 "+project=first_project",
                 "+exp=train",
+                "++model.loss_type=neuralef"
             ]
             // "args" : [
             //     "+study=kinetics_study",
