@@ -8,32 +8,9 @@ import string
 import random 
 import pandas as pd
 import altair as alt
-from trainer.utils import pretty_title, COLORS
+from trainer.utils import pretty_title, COLORS, import_module_attr
 
 ALPHABETS = list(string.ascii_lowercase)
-
-class Metric:
-    def __new__(cls, config):
-        
-        # If the metric is a built-in metric, return the corresponding class
-        metric_name = config.get('name')
-        if metric_name == 'avg_episode_reward':
-            return AvgEpisodeReward(config)
-        elif metric_name == 'episode_rewards':
-            return EpisodeRewards(config)
-        elif metric_name == 'observation_videos':
-            return ObservationVideos(config)
-
-        # Create a new metric based on type
-        metric_type = config['type']
-        temporal = config['temporal']
-        if metric_type=='scalar':
-            if temporal:
-                return TemporalScalarMetric(config)
-            else:
-                return StaticScalarMetric(config)
-        else:
-            raise NotImplementedError()
 
 class StaticMetric():
     """
@@ -342,7 +319,7 @@ class VideoMetric(StaticObjectMetric):
 
 ####################
 
-class ObservationVideos(VideoMetric):
+class RenderVideos(VideoMetric):
     def __init__(self, config=None):
         super().__init__(config)
         self.num_channels = self.config.get('num_channels', 3)
@@ -352,7 +329,7 @@ class ObservationVideos(VideoMetric):
 
 
     def log(self, eval_output, storage, filename):
-        obses = eval_output['obses'] # (T, num_envs, num_frames*C, H, W)
+        obses = eval_output['renders'] # (T, num_envs, num_frames*C, H, W)
         obses = rearrange(obses, 't e (f c) h w -> t e f c h w', c=self.num_channels)
         # Select out max num envs and frames
         obses = obses[:,:self.max_envs,:self.max_frames,:]  
@@ -367,7 +344,7 @@ class ObservationVideos(VideoMetric):
 class AvgEpisodeReward(StaticScalarMetric):
     def log(self, eval_output):
         rews = eval_output['rewards'] # (T, num_envs)
-        rews = np.nanmean(rews, axis=0) # Mean across timesteps
+        rews = np.nansum(rews, axis=0) # Sum across timesteps
         return {
             'avg': rews.mean(), # Mean across envs
             'std': rews.std() # Std across envs
@@ -389,3 +366,93 @@ class EpisodeRewards(TemporalScalarMetric):
             'std': np.nanstd(rews, axis=1) # Std across envs
         }
     
+class PredictionErrorMetric(StaticScalarMetric):
+
+    def log(self, eval_output):
+        """
+        return MSE prediction error from eval_output
+        """
+        
+        pred_errs = (eval_output['preds'].reshape(-1) - eval_output['y'].reshape(-1))**2
+        return {
+            'avg':  np.nanmean(pred_errs), # Mean across batches
+            'std': np.nanstd(pred_errs) # Std across batches
+        }
+
+class LossMetric(StaticScalarMetric):
+    def log(self, eval_output):
+        """
+        retrun avg and std loss
+        """
+        
+        return {
+            'avg':  np.nanmean(eval_output['loss']), # Mean across batches
+            'std': np.nanstd(eval_output['loss']) # Std across batches
+        }
+
+class ModelWeightsMetric(StaticScalarMetric):
+    def log(self, data):
+        """
+        assumes data has key 'model' with dict of model weights
+        return a dict of form:
+         {param_name: {'avg': avg_weight, 'std': std_weight}
+         for all params in data['model']
+        """
+        
+        # Compute average weights
+        model_weights = [x['model'] for x in data['model']]
+        output = {k: {'avg': [], 'std': []} for k in model_weights[0].keys()}
+        for key in output.keys():
+            param_weights = []
+            for idx in range(len(model_weights)):
+                param_weights.append(model_weights[idx][key].detach().cpu().numpy())
+            param_weights = np.concatenate(param_weights)
+            output[key]['avg'] = np.mean(param_weights)
+            output[key]['std'] = np.std(param_weights)
+        
+        return output
+
+
+DEFAULT_METRICS = {
+    'avg_episode_reward': AvgEpisodeReward,
+    'episode_rewards': EpisodeRewards,
+    'render_videos': RenderVideos,
+    'prediction_loss': PredictionErrorMetric,
+    'model_weights': ModelWeightsMetric,
+    'loss': LossMetric
+    }
+
+class Metric:
+    
+    def __new__(cls, config):
+        
+        # If the metric is a built-in metric, return the corresponding class
+        metric_name = config.get('name')
+        if metric_name in DEFAULT_METRICS.keys():
+            return DEFAULT_METRICS[metric_name](config)
+        elif config.get('module_path') is not None:
+            # Load the metric from the module path
+            return import_module_attr(config['module_path'])(config)
+        else:
+            raise ValueError(f"""Metric {metric_name} is not a default metric.
+                             Please provide a module_path
+                             """)
+        # if metric_name == 'avg_episode_reward':
+        #     return AvgEpisodeReward(config)
+        # elif metric_name == 'episode_rewards':
+        #     return EpisodeRewards(config)
+        # elif metric_name == 'observation_videos':
+        #     return ObservationVideos(config)
+        # elif metric_name == 'prediction_loss':
+        #     return PredictionErrorMetric(config)
+
+        # # Create a new metric based on type
+        # metric_type = config['type']
+        # temporal = config['temporal']
+        # if metric_type=='scalar':
+        #     if temporal:
+        #         return TemporalScalarMetric(config)
+        #     else:
+        #         return StaticScalarMetric(config)
+        # else:
+        #     raise NotImplementedError()

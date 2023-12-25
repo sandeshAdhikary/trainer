@@ -11,6 +11,7 @@ import shutil
 from tempfile import TemporaryDirectory
 from datetime import datetime
 import subprocess
+import torch
 
 class Logger(ABC):
     def __init__(self, config: Dict, run=None) -> None:
@@ -23,7 +24,7 @@ class Logger(ABC):
         self.config = self.parse_config(config)
         self.project = config.get('project', 'misc')
         self.dir =  os.path.abspath(config.get('dir', './logdir'))
-        self.video_log_freq = config['video_log_freq']
+        # self.video_log_freq = config['video_log_freq']
         # Make sure self.dir is writable
         if not utils.is_directory_writable(self.dir):
             raise ValueError("Directory %s is not writable!" % self.dir)
@@ -111,15 +112,11 @@ class Logger(ABC):
             config['tags']  = config['tags'] .replace("[", "")
             config['tags']  = config['tags'] .replace("]", "")
             config['tags']  = [item.strip() for item in config['tags'] .split(',')]
-
-        # Set logger_video_log_freq
-        if config.get('video_log_freq') in [None, 'none', 'None']:
-            # Set logger_video_log_freq so we get max num_video_logs videos per run
-            num_video_logs = config.get('num_video_logs', 5)
-            num_evals = int(config['num_train_steps'] // config['eval_freq'])
-            config['video_log_freq'] = max(int(num_evals / num_video_logs), 1)
-
         return config
+    
+
+    def log_linechart(self, key, data):
+        return self._try_sw_log_linechart(key, data)
 
     def log_video(self, key, frames, step, image_mode='hwc'):
         self._try_sw_log_video(key, frames, step, image_mode)
@@ -224,7 +221,9 @@ class Logger(ABC):
                 restore_error = True
         return restore_error
 
-    def _try_sw_log_video(self, key, frames, step, image_mode='hwc'):
+    def _try_sw_log_video(self, key, frames, step=None, image_mode='hwc'):
+        if step is None:
+            step = self._sw.step
         if self.sw_type == 'tensorboard':
             raise NotImplementedError("Tensorboard logger not implemented")
         elif self.sw_type == 'wandb':
@@ -238,21 +237,35 @@ class Logger(ABC):
 
     
 
-    # def _try_sw_log_image(self, key, image, step, image_mode='hwc'):
-    #     if self.sw_type == 'tensorboard':
-    #         if not torch.is_tensor(image):
-    #             image = torch.from_numpy(image)
-    #         assert image.dim() == 3
-    #         grid = torchvision.utils.make_grid(image.unsqueeze(0))
-    #         self._sw.add_image(key, grid, step)
-    #     elif self.sw_type == 'wandb':
-    #         if image_mode == 'chw':
-    #             image = rearrange(image, 'c h w -> h w c')
-    #         if torch.is_tensor(image):
-    #             image = image.detach().cpu().numpy()
-    #         image = image[:,::self.img_downscale_factor,::self.img_downscale_factor]
-    #         self._sw.log({key: [wandb.Image(image)]}, step=step)
+    def _try_sw_log_image(self, key, image, step=None, image_mode='hwc'):
+        if step is None:
+            step = self._sw.step
+        if self.sw_type == 'tensorboard':
+            raise NotImplementedError("Tensorboard logger not implemented")
+        elif self.sw_type == 'wandb':
+            if torch.is_tensor(image):
+                image = image.detach().cpu().numpy()
+            image = image[:,::self.img_downscale_factor,::self.img_downscale_factor]
+            if image_mode == 'chw':
+                image = rearrange(image, 'c h w -> h w c')
+            self._sw.log({key: [wandb.Image(image)]}, step=step)
 
+    def _try_sw_log_linechart(self, key, data):
+        if self.sw_type == 'wandb':
+            assert len(data['x']) == len(data['y'])
+            
+            xs, ys = data['x'], data['y']
+            if not isinstance(data['x'], list):
+                xs, ys = [xs], [ys]
+            wandb.log(
+                {key: wandb.plot.line_series(xs=xs, 
+                                             ys=ys, 
+                                             title=data.get('title', 'Line Plot'),
+                                             keys=data.get('keys', None),
+                                             )})
+
+        else:
+            raise NotImplementedError
 
 
     # def _try_sw_log_histogram(self, key, histogram, step):
@@ -296,9 +309,8 @@ class Logger(ABC):
     #         if hasattr(param.bias, 'grad') and param.bias.grad is not None:
     #             self.log_histogram(key + '_b_g', param.bias.grad.data, step)
 
-    # def log_image(self, key, image, step, image_mode='hwc'):
-    #     assert key.startswith('train') or key.startswith('eval')
-    #     self._try_sw_log_image(key, image, step, image_mode)
+    def log_image(self, key, image, step=None, image_mode='hwc'):
+        self._try_sw_log_image(key, image, step=step, image_mode=image_mode)
 
 
 

@@ -1,14 +1,10 @@
 from abc import ABC, abstractmethod
-from functools import partial
-import numpy as np
-import subprocess
-import queue
-from trainer.rl.envs import TrainerEnv
-from einops import rearrange
 from trainer.storage import Storage
 import tempfile
-from copy import deepcopy
 from abc import abstractproperty
+from trainer.metrics import PredictionErrorMetric
+import numpy as np
+from trainer.metrics import Metric
 
 class Evaluator():
     
@@ -20,15 +16,16 @@ class Evaluator():
         self.model_name = self.config.get('model_name', 'model_checkpoint.pt')
         self.saved_model_type = self.config.get('saved_model_type', 'torch')
         self._set_storage()
-        self.setup_data()
-        self._setup_metric_loggers(metrics)
-        self._setup_terminal_display()
+        self.setup_data(self.config)
+        self._setup_metric_loggers(self.config, metrics)
+        self._setup_terminal_display(self.config)
 
     @abstractproperty
     def module_path(self):
         return None
 
-    def _setup_terminal_display():
+    def _setup_terminal_display(self, config):
+        # TODO: Set up terminal display
         pass
 
 
@@ -53,8 +50,9 @@ class Evaluator():
         self.logger = logger
 
     def run_eval(self, **kwargs):
+        suffix = kwargs.pop('suffix', None)
         self.before_eval(**kwargs)
-        eval_output = self.evaluate(async_eval=self.config['async_eval'], **kwargs)
+        eval_output = self.evaluate(async_eval=self.config['async_eval'], suffix=suffix, **kwargs)
         self.after_eval(eval_output)
         return eval_output
     
@@ -76,8 +74,6 @@ class Evaluator():
             if self.saved_model_type == 'torch':
                 model_ckpt = self.input_storage.load(self.model_name, filetype='torch')
             elif self.saved_model_type == 'zip':
-                # basename = os.path.splitext(self.model_name)[0]
-                # TODO: Make model names consistent when saving
                 model_ckpt = self.input_storage.load_from_archive(self.model_name, 
                                                                 filenames='model_checkpoint.pt',
                                                                 filetypes='torch')
@@ -85,7 +81,7 @@ class Evaluator():
                 raise ValueError(f"Invalid input model format {self.input_model_format}")
         self.model.load_model(model_ckpt)
 
-    def evaluate(self):
+    def evaluate(self, async_eval=False, **kwargs):
         """
         Evaluate model and store evaluation results
         """
@@ -95,11 +91,67 @@ class Evaluator():
         """
         Process and save evaluation results
         """
-        pass
+        # Save evaluation output
+        if self.config.get('save_output'):
+            self.output_storage.save('eval_output.pt', info, filetype='torch')
+
+        # Delete the temporary storage directory
+        self.tmp_root_dir.cleanup()
         
     @abstractmethod
-    def setup_data(self):
+    def setup_data(self, config=None):
         raise NotImplementedError
     
-    def _setup_metric_loggers(self, metrics=None):
+    def _setup_metric_loggers(self, config, metrics=None):
         pass
+
+
+class SupervisedEvaluator(Evaluator):
+    """
+    Evaluator class for supervised learning
+    """
+
+    def evaluate(self, async_eval=False, storage=None):
+        """
+        Evaluate model and store evaluation results
+        return eval_outputs dict
+        """
+        # Set model to evaluation mode
+        self.model.eval()
+
+        # Loop through evaluation data and get evaluation outputs
+        tracked_data = {}
+        for batch_idx, batch in enumerate(self.dataloader):
+            # Collect output from evaluation step
+            eval_step_output = self.model.evaluation_step(batch, batch_idx)
+            # Track the evaluation step outputs
+            if batch_idx == 0:
+                for k, v in eval_step_output.items():
+                    tracked_data[k] = []
+            
+            for k, v in eval_step_output.items():
+                tracked_data[k].append(v)
+    
+        # Concatenate arrays in tracked data
+        for k, v in tracked_data.items():
+            if isinstance(v[0], np.ndarray):
+                tracked_data[k] = np.concatenate(v, axis=0)
+
+        return tracked_data
+
+    def _setup_metric_loggers(self, config, metrics=None):
+        self.metrics = {}
+        config_metrics = config.get('metrics') or self._default_metric_config
+        for metric_name, metric_config in config_metrics.items():
+            self.metrics[metric_name] = Metric(metric_config)
+
+    @property
+    def _default_metric_config(self):
+        return {
+            'prediction_loss': {
+                'name': 'prediction_loss',
+                'type': 'scalar',
+                'temporal': 'true',
+                'table_spec': 'null'
+                }
+                }

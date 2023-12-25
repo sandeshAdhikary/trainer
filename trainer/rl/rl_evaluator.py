@@ -15,7 +15,7 @@ import mysql.connector
 import os
 import json
 import hashlib
-from trainer.metrics import Metric, EpisodeRewards, AvgEpisodeReward, ObservationVideos
+from trainer.metrics import Metric, EpisodeRewards, AvgEpisodeReward, RenderVideos
 
 class RLEvaluator(Evaluator, ABC):
     
@@ -44,9 +44,9 @@ class RLEvaluator(Evaluator, ABC):
         
         return env_fns
 
-    def setup_data(self):
+    def setup_data(self, config=None):
         self.eval_envs = {}
-        for name,config in self.config['envs'].items():
+        for name,config in config['envs'].items():
             self.eval_envs[name] = self.setup_env(config)
             # TrainerEnv(self.env_fns(config))
 
@@ -69,7 +69,7 @@ class RLEvaluator(Evaluator, ABC):
         return eval_env
 
 
-    def evaluate(self, max_ep_steps=None, async_eval=False, logger=None, progress=None, storage='output'):
+    def evaluate(self, max_ep_steps=None, async_eval=False, logger=None, progress=None, storage='output', **kwargs):
         """
         Evaluate the model. 
         Optionally write log and outputs to eval_log_file and eval_output_file
@@ -80,7 +80,8 @@ class RLEvaluator(Evaluator, ABC):
                        Once all sub-processes have completed, we collect and combine outputs from all sub-processes
                        If any of the sub-processes returns an error, the error is logged to output_storage
         """
-        
+        suffix = kwargs.get('suffix', None) # suffix used when saving files
+
         self.eval_jobs = queue.Queue() if async_eval else None
         self.eval_job_errs = [] # To record evaluation errors
         eval_output = {} # Store outputs for each env
@@ -95,7 +96,8 @@ class RLEvaluator(Evaluator, ABC):
                     env_output = evaluation_fn(eval_env=self.eval_envs[env_name],
                                                env_name=env_name,
                                                max_ep_steps=max_ep_steps, 
-                                               storage=storage
+                                               storage=storage,
+                                               suffix=suffix
                                                )
                     eval_output[env_name] = env_output
                     self.eval_job_errs.append(None)
@@ -117,7 +119,7 @@ class RLEvaluator(Evaluator, ABC):
 
         return eval_output
     
-    def _setup_terminal_display(self):
+    def _setup_terminal_display(self, config):
         # Create a progress bar
         self.progress_bar = Progress(
             TextColumn("Evaluation Progress"),
@@ -205,23 +207,26 @@ class RLEvaluator(Evaluator, ABC):
         return eval_output
 
 
-    def nonvec_eval_step(self, eval_env=None, max_ep_steps=None, env_name=None, storage=None):
+    def nonvec_eval_step(self, eval_env=None, max_ep_steps=None, env_name=None, storage=None, **kwargs):
         """
         Evaluation step for non-vectorized environments
         """
         raise NotImplementedError
 
-    def vec_eval_step(self, eval_env=None, max_ep_steps=None, env_name=None, storage=None):
+    def vec_eval_step(self, eval_env=None, max_ep_steps=None, env_name=None, storage=None, **kwargs):
         """
         Evaluation step for vectorized environments
         If storage is provided, write logs and outputs to storage
         """
 
+        suffix = kwargs.get('suffix', None) # suffix used when saving files
+        suffix = f"_{suffix}" if suffix is not None else ''
+
         # Set up storage to write logs and outputs
         eval_storage = None
         if storage is not None:
-            eval_log_file = f'eval_log_{env_name}.txt'
-            eval_output_file = f'eval_output_{env_name}.pt'
+            eval_log_file = f'eval_log_{env_name}' + suffix + '.txt'
+            eval_output_file = f'eval_output_{env_name}' + suffix + '.pt'
             if storage == 'output':
                 eval_storage = self.output_storage
             elif storage == 'tmp':
@@ -229,7 +234,6 @@ class RLEvaluator(Evaluator, ABC):
     
 
         max_ep_steps = max_ep_steps or eval_env.max_episode_steps
-        num_frames = eval_env.frames
 
 
         max_steps = self.num_eval_episodes*max_ep_steps
@@ -239,6 +243,7 @@ class RLEvaluator(Evaluator, ABC):
             'rewards': [],
             'actions': [],
             'dones': [],
+            'renders': []
         }
         obs, info = eval_env.reset() # obs: (num_env, *obs_shape)
         dones = [False] * eval_env.num_envs
@@ -267,6 +272,7 @@ class RLEvaluator(Evaluator, ABC):
                 tracked_data['obses'].append(obs)
 
                 obs, reward, terminated, truncated, info = eval_env.step(action)
+                imgs = eval_env.render()
                 dones = [x or y for (x,y) in zip(terminated, truncated)]
         
                 for ide in range(eval_env.num_envs):
@@ -279,13 +285,14 @@ class RLEvaluator(Evaluator, ABC):
                 tracked_data['rewards'].append(reward)
                 tracked_data['actions'].append(action)
                 tracked_data['dones'].append(dones)
+                tracked_data['renders'].append(imgs)
                 
 
         for key in tracked_data.keys():
             tracked_data[key] = np.stack(tracked_data[key]) # (Time, N, ...)
             for ide in range(eval_env.num_envs):
                 steps = steps_to_keep[ide]
-                if key == 'obses':
+                if key == 'renders' or len(tracked_data[key].shape) == 5:
                     # Zero out images
                     tracked_data[key][steps:, ide] = 0
                 else:
@@ -298,7 +305,7 @@ class RLEvaluator(Evaluator, ABC):
                 # If image or video, need storage so files can be saved
                 eval_outputs[metric_name] = metric.log(tracked_data, 
                                                        eval_storage,
-                                                       filename=f"{env_name}_{metric_name}")
+                                                       filename=f"{env_name}_{metric_name}{suffix}")
             else:
                 eval_outputs[metric_name] = metric.log(tracked_data)
 
@@ -321,7 +328,7 @@ class RLEvaluator(Evaluator, ABC):
         self.tmp_root_dir.cleanup()
 
 
-    def _setup_metric_loggers(self, metrics=None):
+    def _setup_metric_loggers(self, config, metrics=None):
         """"
         Define what metrics should be logged during evaluation
         """
@@ -330,6 +337,7 @@ class RLEvaluator(Evaluator, ABC):
         self.metrics.update({
             'episode_rewards': EpisodeRewards(),
             'avg_episode_rewards': AvgEpisodeReward(),
+            'render_videos': RenderVideos()
         })
 
         # Add any new metrics provided
@@ -370,7 +378,7 @@ class StudyRLEvaluator(RLEvaluator):
     def make_env(self, config):
         return self.make_env_fn(config)
 
-    def _setup_metric_loggers(self, metrics=None):
+    def _setup_metric_loggers(self, config, metrics=None):
         """"
         Define what metrics should be logged during evaluation
         """
@@ -378,7 +386,7 @@ class StudyRLEvaluator(RLEvaluator):
         if metrics is None:
             metrics = {'observation_videos': ObservationVideos()}
 
-        super()._setup_metric_loggers(metrics)
+        super()._setup_metric_loggers(config, metrics)
 
     def after_eval(self, info):
        

@@ -25,6 +25,10 @@ class RLTrainer(Trainer, ABC):
         # Load the make_env function
         self.make_env = import_module_attr( config['make_env_module_path'])
         super().__init__(config, model, logger)
+        # When num_epochs is None, uses steps as max_iter_type
+        # TODO: Allow specifying epochs instead of steps
+        self.num_epochs = None
+        self.model_update_steps = 0
 
 
     def setup_data(self, config: Dict):
@@ -70,6 +74,10 @@ class RLTrainer(Trainer, ABC):
                                         screen=False, 
                                         refresh_per_second=config.get('terminal_refresh_rate', 1))
             
+            # Add a progress bar for num_updates for each epoch
+            self.progress_model_updates = self.progress.add_task("[dark_sea_green4] Model Updates", total=1)
+
+
     def env_fns(self, config):
         """
         config: config dict defining the envs
@@ -97,14 +105,17 @@ class RLTrainer(Trainer, ABC):
                 rollout_data = self.collect_rollouts(self.obs, add_to_buffer=True)
                 # Update the agent
                 num_updates = self.get_num_updates()
+
                 for batch_idx in range(num_updates):
                     self.before_step()
                     batch = self.replay_buffer.sample()
                     self.train_step(batch, batch_idx)
-
+                    self.after_step(info={'num_model_updates': num_updates, 'model_update_idx': batch_idx})
+                
                 self.after_step()
+
                 if (self.epoch % self.config['eval_freq'] == 0) and (self.epoch > 0):
-                    self.evaluate(async_eval=self.async_eval)
+                    self.evaluate(async_eval=self.async_eval, suffix=f"epoch_{self.epoch}")
                 self.after_epoch({'rollout': rollout_data, 'num_model_updates': num_updates})
                 
             self.after_train() 
@@ -152,7 +163,7 @@ class RLTrainer(Trainer, ABC):
             ckpt_state.update({
                 'logger':self.logger.get_log_data()
                 })
-            pass        
+            # pass        
         return ckpt_state
 
     def setup_evaluator(self):
@@ -164,7 +175,6 @@ class RLTrainer(Trainer, ABC):
         eval_storage_config = {}
         eval_storage_config['input'] = deepcopy(self.config['storage']['output'])
         # Evaluator will store results in trainer's output storage
-        # but inside a separate eval folder
         eval_storage_config['output'] = deepcopy(self.config['storage']['output'])
         evaluator_config = {
             'project': self.project,
@@ -180,17 +190,18 @@ class RLTrainer(Trainer, ABC):
         self.evaluator = TrainingRLEvaluator(evaluator_config, self)
         self.evaluator.set_model(self.model)
 
-    def evaluate(self, async_eval=False):
+    def evaluate(self, async_eval=False, **kwargs):
         """"
         Evaluation outputs are written onto a global dict
         to allow for asynchronous evaluation
         """
+        suffix = kwargs.get('suffix', None)
         assert hasattr(self, 'evaluator') and (self.evaluator is not None), 'Evaluator is not set!'
         if not async_eval:
             self.progress_eval.update(0, description='[yellow] Running Evaluation...', completed=0)
             # Update the evaluator's model
             self.evaluator.load_model(state_dict=self.model.state_dict())
-            eval_output = self.evaluator.run_eval()
+            eval_output = self.evaluator.run_eval(suffix=suffix)
             self.eval_log.append({'step': self.step, 'log': eval_output['eval_env']})
             self.progress_eval.update(0, description='[green] Complete!', completed=0)
             # self.progress_eval.update(0, completed=0)
@@ -292,6 +303,17 @@ class RLTrainer(Trainer, ABC):
         )
         self.eval_job_step = self.step
 
+    def after_step(self, info=None):
+        info = info or {}
+        if info.get('num_model_updates') is not None and info.get('model_update_idx') is not None:
+            # Model update steps, so only update model_update progress (self.step not updated)
+            model_update_progress = 1.0*info['model_update_idx']/info['num_model_updates']
+            self.progress.update(self.progress_model_updates, completed=model_update_progress)
+        else:
+            # Normal step (self.step is updated)
+            super().after_step(info)
+
+
     def after_epoch(self, epoch_info=None):
         # Update state from rollout data
         rollout_data = epoch_info['rollout']
@@ -299,7 +321,7 @@ class RLTrainer(Trainer, ABC):
         self.reward = rollout_data['reward']
         self.obs = rollout_data['next_obs']
         self.done = rollout_data['terminated'] | rollout_data['truncated']
-        self.step += rollout_data['num_steps']
+        # self.step += rollout_data['num_steps']
         self.epoch += 1
         self.num_model_updates += epoch_info['num_model_updates']
         self.current_episode_reward += self.reward
@@ -342,8 +364,8 @@ class RLTrainer(Trainer, ABC):
             self.num_checkpoint_saves += 1
             self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint/num_checkpoint_saves': self.num_checkpoint_saves})
 
-
-        self.log_epoch(epoch_info)
+        if (self.log_epoch_freq is not None) and (self.epoch % self.log_epoch_freq == 0) and (self.step > 0):
+            self.log_epoch(epoch_info)
 
 
         # Potentially save best model after every complete episode
@@ -500,6 +522,9 @@ class RLTrainer(Trainer, ABC):
         pass
 
     def collect_rollouts(self, obs, add_to_buffer=False):
+        # Set model to eval when collecting rollouts
+        # TODO: Need this since the encoder behaves differently in train and eval mode
+        self.model.eval()
         # Get Action
         if self.step < self.config['init_steps']:
             action = self.env.action_space.sample()
@@ -535,7 +560,7 @@ class RLTrainer(Trainer, ABC):
         """
         if self.step >= self.config['init_steps']:
             # Update only after init_steps
-            return self.config['init_steps'] if self.step == 0 else self.env.num_envs
+            return self.config['init_steps'] if self.step == self.config['init_steps'] else self.env.num_envs
         return 0
 
     def init_trainer_state(self, state_dict=None):

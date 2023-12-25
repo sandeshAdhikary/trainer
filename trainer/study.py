@@ -6,8 +6,9 @@ from trainer import Sweeper
 from trainer.rl.rl_evaluator import StudyRLEvaluator
 import os
 from trainer.metrics import Metric
+from abc import ABC
 
-class Study:
+class Study(ABC):
     
     def __init__(self, cfg):
         self.config = cfg
@@ -17,7 +18,7 @@ class Study:
         self._setup_db(cfg['study']['database'])
 
     def train(self, config):
-        trainer = self._make_trainer(config)
+        trainer = self._make_trainer(config['overrides'])
         trainer.fit()
 
     def sweep(self, config, num_runs=1):
@@ -127,8 +128,6 @@ class Study:
 
     def _make_model(self, config, trainer):
         model_config = self._merge_configs(self.config['model'], config.get('model', {}))
-        # TODO: Avoid having to get env_shapes from trainer
-        model_config.update(trainer.env.get_env_shapes()) # Need env shapes from trainer's env
         model_cls = import_module_attr(model_config['module_path'])
         return model_cls(dict(model_config))
     
@@ -140,11 +139,24 @@ class Study:
         return model
 
     def _make_sweeper(self, config):
-        sweeper_config = {'project': self.config['project']['project']}
+        sweeper_config = {'project': self.config['project']['name']}
         sweeper_config['sweeper'] = self._merge_configs(self.config.get('sweeper', {}), 
                                              config.get('sweeper', {}))
+        
+        # Apply trainer and model overrides
+        exp_overrides = config.get('overrides', {}) or {}
+        
         sweeper_config['trainer'] = self._merge_configs(self.config['trainer'], 
-                                                        config.get('trainer', {}))
+                                                        exp_overrides.get('trainer', {}))
+        sweeper_config['model'] = self._merge_configs(self.config['model'], 
+                                                        exp_overrides.get('model', {}))
+        sweeper_config['logger'] = self._merge_configs(self.config['logger'], 
+                                                        exp_overrides.get('logger', {}))
+        
+
+
+        # sweeper_config['trainer'] = self._merge_configs(self.config['trainer'], 
+        #                                                 config.get('trainer', {}))
         # Make sure input/output storages use appropriate root_dir/project/sweep folders
         sweeper_config['trainer']['storage']['input'].update({
                 'project': sweeper_config['project'],
@@ -154,12 +166,41 @@ class Study:
                 'project': sweeper_config['project'],
                 'sweep': sweeper_config['sweeper']['name']
         })
-        sweeper_config['logger'] = self._merge_configs(self.config['logger'], 
-                                                        config.get('logger', {}))
-        sweeper_config['model'] = self._merge_configs(self.config['model'], 
-                                                        config.get('model', {}))
+        # sweeper_config['logger'] = self._merge_configs(self.config['logger'], 
+        #                                                 config.get('logger', {}))
+        # sweeper_config['model'] = self._merge_configs(self.config['model'], 
+        #                                                 config.get('model', {}))
         return Sweeper(sweeper_config)
     
+
+    def _make_evaluator(self, config):
+        raise NotImplementedError
+
+    def _merge_configs(self, orig_cfg, new_cfg, to_dict=True):
+        output_cfg = OmegaConf.merge(orig_cfg, new_cfg)
+        if to_dict:
+            # Convert to a standard (resolved) dictionary object
+            output_cfg = OmegaConf.to_container(output_cfg, resolve=True)
+        return output_cfg
+
+    def _run_evaluation(self, config):
+        evaluator = self._make_evaluator(config)
+        model_config = evaluator.input_storage.load('model_config.yaml', filetype='yaml')
+        model_state_dict = evaluator.input_storage.load_from_archive('ckpt.zip', 
+                                                                        filenames=['model_ckpt.pt'],
+                                                                        filetypes=['torch'])
+        model = self._load_model(model_config, model_state_dict['model_ckpt.pt'])
+        evaluator.set_model(model)
+        evaluator.run_eval()
+
+class RLStudy(Study):
+
+    def _make_model(self, config, trainer):
+        model_config = self._merge_configs(self.config['model'], config.get('model', {}))
+        # TODO: Avoid having to get env_shapes from trainer
+        model_config.update(trainer.env.get_env_shapes()) # Need env shapes from trainer's env
+        model_cls = import_module_attr(model_config['module_path'])
+        return model_cls(dict(model_config))
 
     def _make_evaluator(self, config):
         evaluator_config = deepcopy(config)
@@ -186,23 +227,6 @@ class Study:
             evaluator_config['envs'][env_name]['task_name'] = evaluator_config['task_name']
 
         return StudyRLEvaluator(evaluator_config, db=self.db)
-
-    def _merge_configs(self, orig_cfg, new_cfg, to_dict=True):
-        output_cfg = OmegaConf.merge(orig_cfg, new_cfg)
-        if to_dict:
-            # Convert to a standard (resolved) dictionary object
-            output_cfg = OmegaConf.to_container(output_cfg, resolve=True)
-        return output_cfg
-
-    def _run_evaluation(self, config):
-        evaluator = self._make_evaluator(config)
-        model_config = evaluator.input_storage.load('model_config.yaml', filetype='yaml')
-        model_state_dict = evaluator.input_storage.load_from_archive('ckpt.zip', 
-                                                                        filenames=['model_ckpt.pt'],
-                                                                        filetypes=['torch'])
-        model = self._load_model(model_config, model_state_dict['model_ckpt.pt'])
-        evaluator.set_model(model)
-        evaluator.run_eval()
 
 
 if __name__ == '__main__':
