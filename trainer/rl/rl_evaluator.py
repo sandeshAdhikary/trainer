@@ -349,9 +349,9 @@ class TrainingRLEvaluator(RLEvaluator):
     Evaluator class to be used during training
     Uses the trainer's make_env function to create eval env
     """
-    def __init__(self, config, trainer):
+    def __init__(self, config, trainer, metrics=None):
         self.trainer = trainer
-        super().__init__(config)
+        super().__init__(config, metrics=metrics)
 
     def make_env(self, config):
         return self.trainer.make_env(config)

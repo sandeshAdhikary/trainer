@@ -340,6 +340,30 @@ class RenderVideos(VideoMetric):
         return {'filepath': storage.storage_path(f"{filename}.{self.video_format}")}
 
 
+class ObservationVideos(VideoMetric):
+    """
+    Record videos of observations instead of the output from env.render()
+    """
+    def __init__(self, config=None):
+        super().__init__(config)
+        self.num_channels = self.config.get('num_channels', 3)
+        self.max_frames = self.config.get('max_frames', 3)
+        self.max_envs = self.config.get('max_envs', 3)
+        self.video_format = self.config.get('video_format', 'mp4')
+
+
+    def log(self, eval_output, storage, filename):
+        obses = eval_output['obses'] # (T, num_envs, num_frames*C, H, W)
+        obses = rearrange(obses, 't e (f c) h w -> t e f c h w', c=self.num_channels)
+        # Select out max num envs and frames
+        obses = obses[:,:self.max_envs,:self.max_frames,:]  
+        # Stack frames horizontally and environments vertically
+        obses = rearrange(obses, 't e f c h w -> t (e h) (f w) c')
+        video_bytesio = self.imgs_to_video(obses, self.video_format)
+        storage.save(f"{filename}.{self.video_format}", video_bytesio, filetype=self.video_format)
+        return {'filepath': storage.storage_path(f"{filename}.{self.video_format}")}
+    
+
 
 class AvgEpisodeReward(StaticScalarMetric):
     def log(self, eval_output):
@@ -417,6 +441,7 @@ DEFAULT_METRICS = {
     'avg_episode_reward': AvgEpisodeReward,
     'episode_rewards': EpisodeRewards,
     'render_videos': RenderVideos,
+    'observation_videos': ObservationVideos,
     'prediction_loss': PredictionErrorMetric,
     'model_weights': ModelWeightsMetric,
     'loss': LossMetric

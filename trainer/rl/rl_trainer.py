@@ -18,6 +18,7 @@ import os
 import torch
 from trainer import Model, Logger
 from trainer.utils import import_module_attr
+from trainer.metrics import Metric
 
 class RLTrainer(Trainer, ABC):
 
@@ -176,6 +177,8 @@ class RLTrainer(Trainer, ABC):
         eval_storage_config['input'] = deepcopy(self.config['storage']['output'])
         # Evaluator will store results in trainer's output storage
         eval_storage_config['output'] = deepcopy(self.config['storage']['output'])
+        # Get eval metrics
+        
         evaluator_config = {
             'project': self.project,
             'run': self.run,
@@ -184,10 +187,18 @@ class RLTrainer(Trainer, ABC):
             'async_eval': False, # Evalutor does not run async; even if trainer runs async evals
             'model_name': 'ckpt.zip',   
             'envs': {'eval_env': eval_env_config},
-            'storage' : eval_storage_config
+            'storage' : eval_storage_config,
         }
 
-        self.evaluator = TrainingRLEvaluator(evaluator_config, self)
+        eval_metrics = None
+        if self.config.get('eval_metrics') is not None:
+            # Set up eval meitrcs (in addition to the default metrics)
+            eval_metrics = {}
+            for metric_name, metric_config in self.config['eval_metrics'].items():
+                eval_metrics[metric_name] = Metric(metric_config)
+
+
+        self.evaluator = TrainingRLEvaluator(evaluator_config, self, metrics=eval_metrics)
         self.evaluator.set_model(self.model)
 
     def evaluate(self, async_eval=False, **kwargs):
