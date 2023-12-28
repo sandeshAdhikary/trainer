@@ -233,6 +233,7 @@ class Trainer(ABC):
         self.async_eval = config.get('async_eval', False)
         self.log_length_train = config.get('log_length_train', 100)
         self.log_length_eval = config.get('log_length_eval', 100)
+        self.log_checkpoint = config.get('log_checkpoint', True)
 
         self.log_epoch_freq = config.get('log_epoch_freq', 1)
 

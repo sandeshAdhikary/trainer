@@ -369,9 +369,9 @@ class RLTrainer(Trainer, ABC):
                         # Clear current episode reward tracker if done
                         self.current_episode_reward[idx] = 0
 
-        # Log replay buffer size
-        self.logger.log(log_dict={'trainer_step': self.step, 
-                                  'train/replay_buffer_idx': self.replay_buffer.idx})
+        # # Log replay buffer size
+        # self.logger.log(log_dict={'trainer_step': self.step, 
+        #                           'train/replay_buffer_idx': self.replay_buffer.idx})
 
         # Save checkpoint
         if (self.save_checkpoint_freq is not None) and (self.epoch % self.save_checkpoint_freq == 0) and (self.step > 0):
@@ -379,34 +379,16 @@ class RLTrainer(Trainer, ABC):
                 'save_buffer':True,
                 'save_optimizers':True,
                 'save_logs': False
-            })
+            }, 
+            # TODO: Currently checkpoint is not logged (e.g. to wandb) for speed
+            #       create flag for this
+            log_checkpoint=False 
+            )
             self.num_checkpoint_saves += 1
             self.logger.log(log_dict={'trainer_step': self.step, 'checkpoint/num_checkpoint_saves': self.num_checkpoint_saves})
 
         if (self.log_epoch_freq is not None) and (self.epoch % self.log_epoch_freq == 0) and (self.step > 0):
             self.log_epoch(epoch_info)
-
-
-        # Potentially save best model after every complete episode
-        ep_done = any(self.done) if self.env.is_vec_env else self.done
-        if ep_done:
-            # Save only if all envs have completed at least 3 episodes
-            if (self.step > 0) and (all([x >= 3  for x in self.num_episodes])):
-                # For each env, compute average ep_reward over the last 3 episodes
-                avg_ep_reward = [np.mean(x[-3:]) for x in self.episode_reward_list]
-                # average this over the envs
-                avg_ep_reward = np.mean(avg_ep_reward)
-                if (self.best_avg_ep_reward is None) or (avg_ep_reward > self.best_avg_ep_reward):
-                    self.best_avg_ep_reward = avg_ep_reward
-                    # Save this as the best model
-                    self._save_checkpoint(ckpt_name='best_ckpt',
-                                          ckpt_state_args={
-                                              'save_buffer':False,
-                                              'save_optimizers':False,
-                                              'save_logs': False
-                                              })
-                self.logger.log(log_dict={'eval_step': self.step, 'checkpoint/best_avg_ep_reward': self.best_avg_ep_reward})
-
                 
 
 
@@ -424,7 +406,9 @@ class RLTrainer(Trainer, ABC):
             'save_buffer':False,
             'save_optimizers':False,
             'save_logs': False
-        })
+        },
+        log_checkpoint=False
+        )
 
         self.logger.finish()
 
@@ -527,6 +511,25 @@ class RLTrainer(Trainer, ABC):
                     pass
             else:
                 self.progress_eval.update(0, completed=0)
+
+
+        # Potentially save best model
+        # Save only if all envs have completed at least 3 episodes
+        if (self.step > 0) and (all([x >= 3  for x in self.num_episodes])):
+            # For each env, compute average ep_reward over the last 3 episodes
+            avg_ep_reward = [np.mean(x[-3:]) for x in self.episode_reward_list]
+            # average this over the envs
+            avg_ep_reward = np.mean(avg_ep_reward)
+            if (self.best_avg_ep_reward is None) or (avg_ep_reward > self.best_avg_ep_reward):
+                self.best_avg_ep_reward = avg_ep_reward
+                # Save this as the best model
+                self._save_checkpoint(ckpt_name='best_ckpt',
+                                        ckpt_state_args={
+                                            'save_buffer':False,
+                                            'save_optimizers':False,
+                                            'save_logs': False
+                                            })
+                self.logger.log(log_dict={'eval_step': self.step, 'checkpoint/best_avg_ep_reward': self.best_avg_ep_reward})
 
         # Log eval metrics
         if len(self.eval_log) > 0:
