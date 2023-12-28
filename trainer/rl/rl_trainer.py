@@ -19,6 +19,7 @@ import torch
 from trainer import Model, Logger
 from trainer.utils import import_module_attr
 from trainer.metrics import Metric
+from trainer.utils import eval_mode
 
 class RLTrainer(Trainer, ABC):
 
@@ -30,7 +31,12 @@ class RLTrainer(Trainer, ABC):
         # TODO: Allow specifying epochs instead of steps
         self.num_epochs = None
         self.model_update_steps = 0
+        self.setup_sweep_score(config)
 
+    def setup_sweep_score(self, config):
+        # The score assigned to the training run. used e.g. in comparing runs in a sweep
+        self.score_mode = config.get('score_type', 'max_eval_reward')
+        self.score = np.nan
 
     def setup_data(self, config: Dict):
         # Setup the environment
@@ -120,6 +126,7 @@ class RLTrainer(Trainer, ABC):
                 self.after_epoch({'rollout': rollout_data, 'num_model_updates': num_updates})
                 
             self.after_train() 
+        return self.score
 
     def _get_trainer_state(self):
         """
@@ -336,6 +343,7 @@ class RLTrainer(Trainer, ABC):
         self.epoch += 1
         self.num_model_updates += epoch_info['num_model_updates']
         self.current_episode_reward += self.reward
+
         
         if not self.env.is_vec_env:
             # Check if episodes are done
@@ -523,10 +531,16 @@ class RLTrainer(Trainer, ABC):
         # Log eval metrics
         if len(self.eval_log) > 0:
             last_item = self.eval_log[-1]
-            self.logger.log(log_dict={'eval_step': int(last_item['step']),
+            log_dict={'eval_step': int(last_item['step']),
                                       'eval/episode_reward_avg': float(last_item['log']['avg_episode_rewards']['avg']),
                                       'eval/episode_reward_std': float(last_item['log']['avg_episode_rewards']['std'])}
-                                      )
+            # Set the current score
+            if self.score_mode == 'max_eval_reward':
+                self.score = self.eval_log[-1]['log']['avg_episode_rewards']['avg']
+            if self.score is not None:
+                log_dict.update({'score':self.score})
+            self.logger.log(log_dict=log_dict)
+
             
 
     def log_train(self, info=None):
@@ -534,24 +548,24 @@ class RLTrainer(Trainer, ABC):
 
     def collect_rollouts(self, obs, add_to_buffer=False):
         # Set model to eval when collecting rollouts
-        # TODO: Need this since the encoder behaves differently in train and eval mode
-        self.model.eval()
-        # Get Action
-        if self.step < self.config['init_steps']:
-            action = self.env.action_space.sample()
-        else:
-            action = self.model.sample_action(obs, batched=self.env.is_vec_env)
+        with eval_mode(self.model):
+            # Get Action
+            if self.step < self.config['init_steps']:
+                action = self.env.action_space.sample()
+            else:
+                action = self.model.sample_action(obs, batched=self.env.is_vec_env)
         
-        # Env Step
-        next_obs, reward, terminated, truncated, info = self.env.step(action)
-        if add_to_buffer:
-            # TODO: Move this to after_epoch()
-            # Add to buffer: allow infinite bootstrap: don't store truncated as done
-            curr_reward = self.reward
-            self.replay_buffer.add(obs, action, curr_reward, reward, next_obs, terminated, 
-                                   batched=self.env.is_vec_env)
+            # Env Step
+            next_obs, reward, terminated, truncated, info = self.env.step(action)
 
-        num_steps = self.env.num_envs
+            if add_to_buffer:
+                # TODO: Move this to after_epoch()
+                # Add to buffer: allow infinite bootstrap: don't store truncated as done
+                curr_reward = self.reward
+                self.replay_buffer.add(obs, action, curr_reward, reward, next_obs, terminated, 
+                                    batched=self.env.is_vec_env)
+
+            num_steps = self.env.num_envs
 
         return {
             'action': action,

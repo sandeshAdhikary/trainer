@@ -41,7 +41,7 @@ class WandBSweeper():
         wandb_sweep_config = {
             'name': self.sweep_name,
             'method': method,
-            'metric': {"goal": goal, "name": "sweep_score"},
+            'metric': {"goal": goal, "name": "score"},
             'parameters': flatten_dict(parameters),    
         }
         
@@ -127,7 +127,8 @@ class WandBSweeper():
         obj_config = nested_dict_update(obj_config, trail_params) # Update with trial params from wandb sweeper
 
         trainer = make_trainer_fn(obj_config, pre_init_run=run)
-        trainer.fit()
+        score = trainer.fit()
+        return score
 
     def project_sweeps_dict(self):
         project = wandb.Api().project(self.project)

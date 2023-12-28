@@ -244,6 +244,8 @@ class Trainer(ABC):
 
         # To track gpu stats
         self.gpu_devices = get_devices_by_logical_ids(range(torch.cuda.device_count()))
+        # TODO: Set up default sweep score for trainer
+        self.score = None
         
 
     def setup_evaluator(self):
@@ -488,6 +490,7 @@ class SupervisedTrainer(Trainer):
                 self.evaluate()
                 self.after_epoch()     
         self.after_train() 
+        return self.score
 
 
     def evaluate(self, async_eval=False):

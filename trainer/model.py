@@ -93,6 +93,10 @@ class Model(ABC):
     def __call__(self, x):
         return self.forward(x)
 
+    @property
+    def training(self):
+        return self.model.training
+
 
 class RegressionModel(Model):
     """

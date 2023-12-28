@@ -19,6 +19,31 @@ COLORS = {
               "#C49C94", "#F7B6D2", "#C7C7C7", "#DBDB8D", "#9EDAE5"]
 }
 
+class eval_mode(object):
+    """
+    Context manager that sets models to eval mode
+    and then returns them back to original mode
+    Code from https://github.com/facebookresearch/deep_bisim4control/tree/main
+    """
+    def __init__(self, *models):
+        self.models = models
+
+    def __enter__(self):
+        # Store previous train/eval modes for models
+        # set all models to eval mode
+        self.prev_states = []
+        for model in self.models:
+            self.prev_states.append(model.training)
+            model.eval()
+
+    def __exit__(self, *args):
+        # Return models to original train/eval modes
+        for model, train_mode in zip(self.models, self.prev_states):
+            if train_mode:
+                model.train()
+            else:
+                model.eval()
+        return False
 
 def pretty_title(x):
     x = x.replace('_', ' ').title()
