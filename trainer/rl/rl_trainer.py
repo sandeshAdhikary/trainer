@@ -83,6 +83,10 @@ class RLTrainer(Trainer, ABC):
             
             # Add a progress bar for num_updates for each epoch
             self.progress_model_updates = self.progress.add_task("[dark_sea_green4] Model Updates", total=1)
+        else:
+            self.progress_eval = None
+            
+
 
 
     def env_fns(self, config):
@@ -216,12 +220,14 @@ class RLTrainer(Trainer, ABC):
         suffix = kwargs.get('suffix', None)
         assert hasattr(self, 'evaluator') and (self.evaluator is not None), 'Evaluator is not set!'
         if not async_eval:
-            self.progress_eval.update(0, description='[yellow] Running Evaluation...', completed=0)
+            if self.progress_eval is not None:
+                self.progress_eval.update(0, description='[yellow] Running Evaluation...', completed=0)
             # Update the evaluator's model
             self.evaluator.load_model(state_dict=self.model.state_dict())
             eval_output = self.evaluator.run_eval(suffix=suffix)
             self.eval_log.append({'step': self.step, 'log': eval_output['eval_env']})
-            self.progress_eval.update(0, description='[green] Complete!', completed=0)
+            if self.progress_eval is not None:
+                self.progress_eval.update(0, description='[green] Complete!', completed=0)
             # self.progress_eval.update(0, completed=0)
         else:
             self._wait_for_eval_job() # If previous eval job has not finished, wait for it
@@ -243,7 +249,8 @@ class RLTrainer(Trainer, ABC):
                     try:
                         eval_job_log = self.output_storage.load(self.eval_job_log_file, filetype='text')
                         step = eval_job_log.split('\n')[-2].split('step:')[-1]
-                        self.progress_eval.update(0, completed=float(step)) # update eval progress
+                        if self.progress_eval is not None:
+                            self.progress_eval.update(0, completed=float(step)) # update eval progress
                     except FileNotFoundError:
                         # File may not have been populated yet
                         pass
@@ -255,7 +262,8 @@ class RLTrainer(Trainer, ABC):
                 eval_output = self.output_storage.load(self.eval_job_output_file, filetype='torch')
                 self.eval_log.append({'step': self.eval_job_step, 'log': eval_output})
                 # Reset the progress bar
-                self.progress_eval.update(0, completed=0)
+                if self.progress_eval is not None:
+                    self.progress_eval.update(0, completed=0)
             else:
                 self.output_storage.save(f"eval_job_errs.txt", '\n'.join(err), filetype='text', write_mode='w')
                 raise Exception(f"Eval job failed with error. Check error log at {self.output_storage.storage_path('eval_job_errs.txt')}")
@@ -326,7 +334,8 @@ class RLTrainer(Trainer, ABC):
         if info.get('num_model_updates') is not None and info.get('model_update_idx') is not None:
             # Model update steps, so only update model_update progress (self.step not updated)
             model_update_progress = 1.0*info['model_update_idx']/info['num_model_updates']
-            self.progress.update(self.progress_model_updates, completed=model_update_progress)
+            if self.progress is not None:
+                self.progress.update(self.progress_model_updates, completed=model_update_progress)
         else:
             # Normal step (self.step is updated)
             super().after_step(info)
@@ -497,20 +506,23 @@ class RLTrainer(Trainer, ABC):
                     job_status = self.eval_job.poll()
                     if job_status is not None:
                         # Eval job has ended
-                        self.progress_eval.update(0, completed=0)
+                        if self.progress_eval is not None:
+                            self.progress_eval.update(0, completed=0)
                     else:
                         eval_job_log = self.output_storage.load(self.eval_job_log_file, filetype='text')
                         try:
                             # Log progress
                             step = eval_job_log.split('\n')[-2].split('step:')[-1]
-                            self.progress_eval.update(0, completed=float(step))
+                            if self.progress_eval is not None:
+                                self.progress_eval.update(0, completed=float(step))
                         except IndexError as e:
                             # File has been populated, but no "step" line created yet
                             pass
                 except FileNotFoundError as e:
                     pass
             else:
-                self.progress_eval.update(0, completed=0)
+                if self.progress_eval is not None:
+                    self.progress_eval.update(0, completed=0)
 
 
         # Potentially save best model

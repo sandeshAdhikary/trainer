@@ -84,10 +84,13 @@ class Trainer(ABC):
             self._load_checkpoint()
 
 
+        current_iter = self.epoch if self.max_iter_type=='epoch' else self.step
         if self.progress is not None:
             # Initialize progress
-            current_iter = self.epoch if self.max_iter_type=='epoch' else self.step
             self.progress.update(self.progress_train, completed=current_iter)
+        else:
+            print(f"{self.max_iter_type}: {current_iter}")
+
         self.logger.start()
         # Set model to train mode
         self.model.train()
@@ -123,13 +126,16 @@ class Trainer(ABC):
         self.update_trainer_state()
         # Logging
         self.log_step(info)
-        # Update progress
-        if self.max_iter_type=='step' and (self.progress is not None):
-            self.progress.update(self.progress_train, completed=self.step)
+        if self.progress is not None:
+            # Update progress
+            if self.max_iter_type=='step' and (self.progress is not None):
+                self.progress.update(self.progress_train, completed=self.step)
 
-        if self.max_iter_type == 'epoch':
-            completed = (1.0*self.step%self.steps_per_epoch)/self.steps_per_epoch
-            self.progress.update(self.progress_within_epoch, completed=completed)
+            if self.max_iter_type == 'epoch' and (self.progress is not None):
+                completed = (1.0*self.step%self.steps_per_epoch)/self.steps_per_epoch
+                self.progress.update(self.progress_within_epoch, completed=completed)
+        else:
+            print(f"Step: {self.step}, Epoch: {self.epoch}")
                 
 
     def after_epoch(self, info=None):
@@ -140,6 +146,8 @@ class Trainer(ABC):
         
         if self.max_iter_type=='epoch' and (self.progress is not None):
             self.progress.update(self.progress_train, completed=self.epoch)
+        else:
+            print(f"Epoch: , {self.epoch}")
 
         # Save checkpoint
         if (self.save_checkpoint_freq is not None) and (self.epoch % self.save_checkpoint_freq == 0) and (self.step > 0):
