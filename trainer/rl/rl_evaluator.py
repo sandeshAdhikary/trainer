@@ -15,7 +15,7 @@ import mysql.connector
 import os
 import json
 import hashlib
-from trainer.metrics import Metric, EpisodeRewards, AvgEpisodeReward, RenderVideos
+from trainer.metrics import Metric, EpisodeRewards, AvgEpisodeReward, RenderVideos, ObservationVideos
 
 class RLEvaluator(Evaluator, ABC):
     
@@ -336,7 +336,7 @@ class RLEvaluator(Evaluator, ABC):
         # Default metrics to log
         self.metrics.update({
             'episode_rewards': EpisodeRewards(),
-            'avg_episode_rewards': AvgEpisodeReward(),
+            'avg_episode_reward': AvgEpisodeReward(),
             'render_videos': RenderVideos()
         })
 
@@ -411,8 +411,12 @@ class StudyRLEvaluator(RLEvaluator):
         import wandb
         api = wandb.Api()
         run = api.run(f"{self.project}/{self.run}")
-        train_history = run.history(keys=['trainer_step', 'train/episode_reward']).to_json()
+        train_history = run.history(keys=['trainer_step', 
+                                          'train/episode_reward']).to_json()
+        train_eval_history = run.history(keys=['eval_step', 'eval/episode_reward_avg', 'eval/episode_reward_std']).to_json()
+        
         self.output_storage.save('train_history.json', train_history, filetype='json')
+        self.output_storage.save('train_eval_history.json', train_eval_history, filetype='json')
 
         
 

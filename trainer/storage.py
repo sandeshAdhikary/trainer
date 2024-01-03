@@ -69,10 +69,16 @@ class BaseStorage(ABC):
             dirname = os.path.dirname(filename)
             if len(dirname) > 0:
                 # If dirname provided, make dir in tmp_dir
-                os.makedirs(os.path.join(tmp_dir, dirname), exist_ok=True)
-
+                tmp_dir = os.path.join(tmp_dir, dirname)
+                os.makedirs(tmp_dir, exist_ok=True)
             # Download file to local machine
             self.download(filename, tmp_dir)
+
+            if len(dirname) > 0:
+                # TODO: Find a better solution
+                #      when len(dirname) > 0, the file gets saved as tmp_dir/<basename>
+                filename = os.path.basename(filename)
+
             # Load contents of downloaded file
             if filetype == 'text':
                 with open(os.path.join(tmp_dir, filename), 'r') as f:
@@ -415,11 +421,12 @@ class SSHFileSystemStorage(BaseStorage):
         """
         new_file = f"{directory}/{os.path.basename(filename)}"
         new_dir = os.path.dirname(new_file)
+
         if len(new_dir) > 0:
             os.makedirs(new_dir, exist_ok=True)
         with self.connection.open_sftp() as sftp:
             sftp.get(self.storage_path(filename), new_file)
-    
+        
         if filename.endswith('.zip') and extract_archives:
             # Unzip and save unzipped files in dir
             with zipfile.ZipFile(new_file, 'r') as zip_ref:

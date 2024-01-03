@@ -547,11 +547,11 @@ class RLTrainer(Trainer, ABC):
         if len(self.eval_log) > 0:
             last_item = self.eval_log[-1]
             log_dict={'eval_step': int(last_item['step']),
-                                      'eval/episode_reward_avg': float(last_item['log']['avg_episode_rewards']['avg']),
-                                      'eval/episode_reward_std': float(last_item['log']['avg_episode_rewards']['std'])}
+                                      'eval/episode_reward_avg': float(last_item['log']['avg_episode_reward']['avg']),
+                                      'eval/episode_reward_std': float(last_item['log']['avg_episode_reward']['std'])}
             # Set the current score
             if self.score_mode == 'max_eval_reward':
-                self.score = self.eval_log[-1]['log']['avg_episode_rewards']['avg']
+                self.score = self.eval_log[-1]['log']['avg_episode_reward']['avg']
             if self.score is not None:
                 log_dict.update({'score':self.score})
             self.logger.log(log_dict=log_dict)

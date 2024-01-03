@@ -29,39 +29,47 @@ class Study(ABC):
 
         evaluator_config = self._merge_configs(self.config['evaluator'], config['evaluator'])
 
-        project_name = config['evaluator']['project']
-        sweep_name = config['evaluator'].get('sweep')
-        run_name = config['evaluator'].get('run')
+        project_name = evaluator_config['project']
+        sweep_names = config['evaluator'].get('sweeps')
+        run_names = config['evaluator'].get('runs')
         
-        # Check storage for runs in the sweep
-        root_dir = os.path.join(self.storage.dir, project_name)
-        if sweep_name is not None:
-            root_dir = os.path.join(root_dir, f"sweep_{sweep_name}")
-
-        project_folders = self.storage.get_filenames(dir=os.path.join(self.config['name'], root_dir))
-
-        assert len(project_folders) > 0, f'No runs found in {root_dir}'
-
-        if run_name is not None:
-            # Run the single run provided
-            assert run_name in project_folders, f'Run {run_name} not found in {root_dir}'
-            self._run_evaluation(evaluator_config)
+        if run_names is not None:
+            self._evaluate_runs(project_name, run_names, evaluator_config)
+        elif sweep_names is not None:
+            self._evaluate_sweeps(project_name, sweep_names, evaluator_config)
         else:
-            # Loop through all runs in the sweep folder
-            for run_name in project_folders:
-                if run_name.startswith('sweep'):
-                    sweep_name = run_name.split('sweep_')[-1]
-                    sweep_folders = self.storage.get_filenames(dir=os.path.join(self.config['name'], root_dir, run_name))
-                    for idr, sweep_run_name in enumerate(sweep_folders):
-                        print(f"Running {sweep_run_name} in sweep {sweep_name} ({idr}/{len(sweep_folders)})")
-                        run_eval_config = deepcopy(evaluator_config)
-                        run_eval_config['run'] = sweep_run_name
-                        run_eval_config['sweep'] = sweep_name
-                        self._run_evaluation(run_eval_config)
-                else:
-                    run_eval_config = deepcopy(evaluator_config)
-                    run_eval_config['run'] = run_name
+            raise ValueError("Either evaluator.runs or evaluator.sweeps must be provided")
+
+
+    def _evaluate_sweeps(self, project_name, sweep_names, evaluator_config):
+        for sweep_name in sweep_names:
+            root_dir = os.path.join(self.storage.dir, project_name, f"sweep_{sweep_name}")
+            run_folders = self.storage.get_filenames(dir=os.path.join(project_name, root_dir))
+            for run_name in run_folders:
+                run_eval_config = deepcopy(evaluator_config)
+                run_eval_config['run'] = run_name
+                run_eval_config['sweep'] = sweep_name
+                try:
                     self._run_evaluation(run_eval_config)
+                except Exception as e:
+                    print(f"Error running {run_name} in sweep {sweep_name}. Error: {e}")
+                    continue
+
+    def _evaluate_runs(self, project_name, run_names, evaluator_config):
+        # Check storage for runs in the sweep
+        for run_name in run_names:
+            sweep_name = None
+            if len(run_name.split('/')) > 1:
+                sweep_name, run_name = run_name.split('/')
+            
+            run_eval_config = deepcopy(evaluator_config)
+            run_eval_config['run'] = run_name
+            run_eval_config['sweep'] = sweep_name
+            try:
+                self._run_evaluation(run_eval_config)
+            except Exception as e:
+                print(f"Error running {run_name} in sweep {sweep_name or '[No sweep]'}. Error: {e}")
+                continue
 
 
     def show_runs(self, run_names=None, limit=None, output_format='pandas'):
@@ -77,8 +85,6 @@ class Study(ABC):
         run_path = f"{project}/{run_id}/train"
         if sweep is not None:
             run_path = f"{project}/sweep_{sweep}/{run_id}/train"
-        
-        
         model_config = self.storage.load(f"{run_path}/model_config.yaml", filetype='yaml')
         trainer_config = self.storage.load(f"{run_path}/trainer_config.yaml", filetype='yaml')
 
@@ -154,10 +160,6 @@ class Study(ABC):
                                                         exp_overrides.get('logger', {}))
         
 
-
-        # sweeper_config['trainer'] = self._merge_configs(self.config['trainer'], 
-        #                                                 config.get('trainer', {}))
-        # Make sure input/output storages use appropriate root_dir/project/sweep folders
         sweeper_config['trainer']['storage']['input'].update({
                 'project': sweeper_config['project'],
                 'sweep': sweeper_config['sweeper']['name']
@@ -166,16 +168,9 @@ class Study(ABC):
                 'project': sweeper_config['project'],
                 'sweep': sweeper_config['sweeper']['name']
         })
-        # sweeper_config['logger'] = self._merge_configs(self.config['logger'], 
-        #                                                 config.get('logger', {}))
-        # sweeper_config['model'] = self._merge_configs(self.config['model'], 
-        #                                                 config.get('model', {}))
+ 
         return Sweeper(sweeper_config)
     
-
-    def _make_evaluator(self, config):
-        raise NotImplementedError
-
     def _merge_configs(self, orig_cfg, new_cfg, to_dict=True):
         output_cfg = OmegaConf.merge(orig_cfg, new_cfg)
         if to_dict:
@@ -186,21 +181,30 @@ class Study(ABC):
     def _run_evaluation(self, config):
         evaluator = self._make_evaluator(config)
         model_config = evaluator.input_storage.load('model_config.yaml', filetype='yaml')
-        model_state_dict = evaluator.input_storage.load_from_archive('ckpt.zip', 
-                                                                        filenames=['model_ckpt.pt'],
-                                                                        filetypes=['torch'])
-        model = self._load_model(model_config, model_state_dict['model_ckpt.pt'])
+        ckpt_name = 'best_ckpt' if config.get('use_best_ckpt') else 'ckpt'
+        model_state_dict = evaluator.input_storage.load_from_archive(f'{ckpt_name}.zip', 
+                                                            filenames=[f'model_{ckpt_name}.pt'],
+                                                            filetypes=['torch']
+                                                            )
+        model = self._load_model(model_config, model_state_dict[f'model_{ckpt_name}.pt'])
         evaluator.set_model(model)
         evaluator.run_eval()
 
+    def _make_evaluator(self, config):
+        raise NotImplementedError
+
 class RLStudy(Study):
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
     def _make_model(self, config, trainer):
         model_config = self._merge_configs(self.config['model'], config.get('model', {}))
-        # TODO: Avoid having to get env_shapes from trainer
-        model_config.update(trainer.env.get_env_shapes()) # Need env shapes from trainer's env
+        model_config['obs_shape'] = trainer.env.observation_space.shape[1:]
+        model_config['action_shape'] = trainer.env.action_space.shape[1:]
         model_cls = import_module_attr(model_config['module_path'])
         return model_cls(dict(model_config))
+
 
     def _make_evaluator(self, config):
         evaluator_config = deepcopy(config)
@@ -220,11 +224,6 @@ class RLStudy(Study):
         if evaluator_config.get('sweep') is not None:
             evaluator_config['storage']['input']['sweep'] = evaluator_config['sweep']
             evaluator_config['storage']['output']['sweep'] = evaluator_config['sweep']
-
-        # Set environment domain and task names
-        for env_name in evaluator_config['envs'].keys():
-            evaluator_config['envs'][env_name]['domain_name'] = evaluator_config['domain_name']
-            evaluator_config['envs'][env_name]['task_name'] = evaluator_config['task_name']
 
         return StudyRLEvaluator(evaluator_config, db=self.db)
 
