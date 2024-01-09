@@ -5,6 +5,7 @@ from abc import abstractproperty
 from trainer.metrics import PredictionErrorMetric
 import numpy as np
 from trainer.metrics import Metric
+from trainer.utils import import_module_attr
 
 class Evaluator():
     
@@ -15,10 +16,12 @@ class Evaluator():
         self.sweep = self.config.get('sweep')
         self.model_name = self.config.get('model_name', 'model_checkpoint.pt')
         self.saved_model_type = self.config.get('saved_model_type', 'torch')
+        self.random_agent = self.config.get('random_agent', False)
         self._set_storage()
         self.setup_data(self.config)
         self._setup_metric_loggers(self.config, metrics)
         self._setup_terminal_display(self.config)
+        self._setup_callbacks(self.config)
 
     @abstractproperty
     def module_path(self):
@@ -27,6 +30,17 @@ class Evaluator():
     def _setup_terminal_display(self, config):
         # TODO: Set up terminal display
         pass
+
+    def _setup_callbacks(self, config):
+        """
+        Callbacks 
+        """
+        self.callbacks = {}
+        if config.get('callbacks') is not None:
+            for cbk_name, cbk_config in config.get('callbacks').items():
+                self.callbacks.update({cbk_name: import_module_attr(
+                    cbk_config['module_path'])(cbk_config)
+                    })
 
 
     def _set_storage(self):

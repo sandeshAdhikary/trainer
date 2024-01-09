@@ -97,6 +97,58 @@ class Model(ABC):
     def training(self):
         return self.model.training
 
+class NullModel(Model):
+    """
+    A null model class. Used when initializing trainer/evaluator without a model (e.g. with random agent)
+    """
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def training_step(self, batch, batch_idx):
+        pass
+    
+    def evaluation_step(self, batch, batch_idx):
+        pass
+
+    def forward(self, x):
+        """
+        The NullModel's forward model should not be called
+        """
+        raise RuntimeError('NullModel forward should not be called')
+    
+    def loss(self, *args, **kwargs):
+        raise RuntimeError('NullModel loss should not be called')
+
+    def state_dict(self, include_optimizers=False):
+        raise RuntimeError('NullModel state_dict should not be called')
+
+    def train(self):
+        """
+        Set model to training mode
+        """
+        pass
+
+    def eval(self):
+        """
+        Set model to evaluation mode
+        """
+        pass
+
+    def zero_grad(self):
+        pass
+    
+    @property
+    def module_path(self):
+        raise RuntimeError('NullModel module_path should not be called')
+    
+    def __call__(self, x):
+        pass
+
+    @property
+    def training(self):
+        pass
+
 
 class RegressionModel(Model):
     """

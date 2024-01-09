@@ -7,6 +7,7 @@ from trainer.rl.rl_evaluator import StudyRLEvaluator
 import os
 from trainer.metrics import Metric
 from abc import ABC
+from trainer.model import NullModel
 
 class Study(ABC):
     
@@ -33,13 +34,22 @@ class Study(ABC):
         sweep_names = config['evaluator'].get('sweeps')
         run_names = config['evaluator'].get('runs')
         
-        if run_names is not None:
+        if config['evaluator'].get('random_agent'):
+            self._evaluate_random_agent(project_name, evaluator_config)
+        elif run_names is not None:
             self._evaluate_runs(project_name, run_names, evaluator_config)
         elif sweep_names is not None:
             self._evaluate_sweeps(project_name, sweep_names, evaluator_config)
         else:
             raise ValueError("Either evaluator.runs or evaluator.sweeps must be provided")
 
+
+    def _evaluate_random_agent(self, project_name, evaluator_config):
+        run_eval_config = deepcopy(evaluator_config)
+        run_eval_config['sweep'] = 'random_agent'
+        run_eval_config['run'] = 'random_agent'
+        run_eval_config['random_agent'] = True
+        self._run_evaluation(run_eval_config)
 
     def _evaluate_sweeps(self, project_name, sweep_names, evaluator_config):
         for sweep_name in sweep_names:
@@ -180,13 +190,18 @@ class Study(ABC):
 
     def _run_evaluation(self, config):
         evaluator = self._make_evaluator(config)
-        model_config = evaluator.input_storage.load('model_config.yaml', filetype='yaml')
-        ckpt_name = 'best_ckpt' if config.get('use_best_ckpt') else 'ckpt'
-        model_state_dict = evaluator.input_storage.load_from_archive(f'{ckpt_name}.zip', 
-                                                            filenames=[f'model_{ckpt_name}.pt'],
-                                                            filetypes=['torch']
-                                                            )
-        model = self._load_model(model_config, model_state_dict[f'model_{ckpt_name}.pt'])
+        if not config['random_agent']:
+            # If not a random agent, load a model
+            model_config = evaluator.input_storage.load('model_config.yaml', filetype='yaml')
+            ckpt_name = 'best_ckpt' if config.get('use_best_ckpt') else 'ckpt'
+            model_state_dict = evaluator.input_storage.load_from_archive(f'{ckpt_name}.zip', 
+                                                                filenames=[f'model_{ckpt_name}.pt'],
+                                                                filetypes=['torch']
+                                                                )
+            model = self._load_model(model_config, model_state_dict[f'model_{ckpt_name}.pt'])
+            
+        else:
+            model = NullModel()
         evaluator.set_model(model)
         evaluator.run_eval()
 
@@ -225,7 +240,18 @@ class RLStudy(Study):
             evaluator_config['storage']['input']['sweep'] = evaluator_config['sweep']
             evaluator_config['storage']['output']['sweep'] = evaluator_config['sweep']
 
-        return StudyRLEvaluator(evaluator_config, db=self.db)
+        # Set up evaluation metrics
+        metrics_dict = {name: Metric(cfg) for (name, cfg) in evaluator_config['metrics'].items()}
+        # for metric_name, metric in evaluator_config['metrics'].items():
+        #     metric_dict.update({metric_name: Metric(metric)})
+        # evaluator_config['metrics'][metric_name] = metric
+
+        if evaluator_config.get('module_path') is not None:
+            evaluator_cls = import_module_attr(evaluator_config['module_path'])
+        else:
+            evaluator_cls = StudyRLEvaluator
+
+        return evaluator_cls(evaluator_config, db=self.db, metrics=metrics_dict)
 
 
 if __name__ == '__main__':

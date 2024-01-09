@@ -247,6 +247,7 @@ class StaticObjectMetric(StaticMetric):
     """
     def __init__(self, config=None):
         super().__init__(config)
+        self.type = 'object'
 
     @property
     def db_spec(self):
@@ -259,6 +260,53 @@ class StaticObjectMetric(StaticMetric):
                 PRIMARY KEY (run_id, sweep, eval_name)
             """
 
+    def db_dict(self, ids, data):
+        db_dict = {'ids': {}, 'data': {}}
+        # Fill id columns
+        for k, v in ids.items():
+            if k in ['run_id', 'sweep', 'project', 'eval_name']:
+                db_dict['ids'][k] = v
+        # Fill data columns
+        db_dict['data']['filepath'] = data['filepath']
+        return db_dict
+
+
+class DataFrameMetric(StaticObjectMetric):
+    """
+    Single step dataframes
+    """
+    def __init__(self, config=None):
+        super().__init__(config)
+        self.object_type = 'dataframe'
+        # self.type = 'dataframe'
+
+
+class ArrayMetric(StaticObjectMetric):
+    """
+    Single step arrays
+    """
+    def __init__(self, config=None):
+        super().__init__(config)
+        self.object_type = 'array'
+        # self.type = 'array'
+
+class VegaChartMetric(StaticObjectMetric):
+    """
+    A single Vega/Altair chart in json format
+    """
+    def __init__(self, config=None):
+        super().__init__(config)
+        # self.type = 'chart'
+
+
+class DictMetric(StaticObjectMetric):
+    """
+    Single step arrays
+    """
+    def __init__(self, config=None):
+        super().__init__(config)
+        self.object_type = 'dict'
+        # self.type = 'dict'
 
 class ImageMetric(StaticObjectMetric):
     """
@@ -266,7 +314,9 @@ class ImageMetric(StaticObjectMetric):
     """
     def __init__(self, config=None):
         super().__init__(config)
-        self.type = 'image'
+        self.object_type = 'image'
+        # self.type = 'image'
+
 
 
 class VideoMetric(StaticObjectMetric):
@@ -277,22 +327,22 @@ class VideoMetric(StaticObjectMetric):
     """
     def __init__(self, config=None):
         super().__init__(config)
-        self.type = 'video'
+        self.object_type = 'video'
         self.frame_rate = self.config.get('frame_rate', 20)
         self.quality = self.config.get('quality', 10)
         self.quality = min(10, self.quality)
         self.macro_block_size = 16 # ffmpeg writer's default
         self.img_size = (112,112)
     
-    def db_dict(self, ids, data):
-        db_dict = {'ids': {}, 'data': {}}
-        # Fill id columns
-        for k, v in ids.items():
-            if k in ['run_id', 'sweep', 'project', 'eval_name']:
-                db_dict['ids'][k] = v
-        # Fill data columns
-        db_dict['data']['filepath'] = data['filepath']
-        return db_dict
+    # def db_dict(self, ids, data):
+    #     db_dict = {'ids': {}, 'data': {}}
+    #     # Fill id columns
+    #     for k, v in ids.items():
+    #         if k in ['run_id', 'sweep', 'project', 'eval_name']:
+    #             db_dict['ids'][k] = v
+    #     # Fill data columns
+    #     db_dict['data']['filepath'] = data['filepath']
+    #     return db_dict
 
     
     def imgs_to_video(self, imgs, video_format='mp4'):
@@ -318,6 +368,7 @@ class VideoMetric(StaticObjectMetric):
 
 
 ####################
+
 
 class RenderVideos(VideoMetric):
     def __init__(self, config=None):
@@ -363,6 +414,29 @@ class ObservationVideos(VideoMetric):
         storage.save(f"{filename}.{self.video_format}", video_bytesio, filetype=self.video_format)
         return {'filepath': storage.storage_path(f"{filename}.{self.video_format}")}
     
+class Observations(StaticObjectMetric):
+    """
+    Record observations. 
+    Using static object metric so we store a single tensor/array
+    """
+    def __init__(self, config=None):
+        super().__init__(config)
+        self.object_type = 'array'
+
+    def log(self, eval_output, storage, filename):
+        obses = eval_output['obses'] # (B, num_envs, num_frames*C, H, W)
+        storage.save(f"{filename}.pt", obses, filetype='torch')
+        return {'filepath': storage.storage_path(f"{filename}.pt")}
+        
+    def db_dict(self, ids, data):
+        db_dict = {'ids': {}, 'data': {}}
+        # Fill id columns
+        for k, v in ids.items():
+            if k in ['run_id', 'sweep', 'project', 'eval_name']:
+                db_dict['ids'][k] = v
+        # Fill data columns
+        db_dict['data']['filepath'] = data['filepath']
+        return db_dict
 
 
 class AvgEpisodeReward(StaticScalarMetric):
@@ -436,12 +510,12 @@ class ModelWeightsMetric(StaticScalarMetric):
         
         return output
 
-
 DEFAULT_METRICS = {
     'avg_episode_reward': AvgEpisodeReward,
     'episode_rewards': EpisodeRewards,
     'render_videos': RenderVideos,
     'observation_videos': ObservationVideos,
+    'observations': Observations,
     'prediction_loss': PredictionErrorMetric,
     'model_weights': ModelWeightsMetric,
     'loss': LossMetric
@@ -462,22 +536,3 @@ class Metric:
             raise ValueError(f"""Metric {metric_name} is not a default metric.
                              Please provide a module_path
                              """)
-        # if metric_name == 'avg_episode_reward':
-        #     return AvgEpisodeReward(config)
-        # elif metric_name == 'episode_rewards':
-        #     return EpisodeRewards(config)
-        # elif metric_name == 'observation_videos':
-        #     return ObservationVideos(config)
-        # elif metric_name == 'prediction_loss':
-        #     return PredictionErrorMetric(config)
-
-        # # Create a new metric based on type
-        # metric_type = config['type']
-        # temporal = config['temporal']
-        # if metric_type=='scalar':
-        #     if temporal:
-        #         return TemporalScalarMetric(config)
-        #     else:
-        #         return StaticScalarMetric(config)
-        # else:
-        #     raise NotImplementedError()

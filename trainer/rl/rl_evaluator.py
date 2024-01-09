@@ -267,7 +267,10 @@ class RLEvaluator(Evaluator, ABC):
                     break
                 steps += 1
                 # Get actions for all envs
-                action = self.model.select_action(obs, batched=True)
+                if self.random_agent:
+                    action = eval_env.action_space.sample()
+                else:
+                    action = self.model.select_action(obs, batched=True)
 
                 tracked_data['obses'].append(obs)
 
@@ -299,9 +302,16 @@ class RLEvaluator(Evaluator, ABC):
                     # Fill steps after last complete episode with nans
                     tracked_data[key][steps:, ide] = np.nan
 
+        if len(self.callbacks) > 0:
+            for cbk_name, cbk in self.callbacks.items():
+                tracked_data.update({cbk_name: cbk(tracked_data=tracked_data,
+                                                   model=self.model,
+                                                   env=eval_env)})
+
+
         eval_outputs = {}
         for metric_name, metric in self.metrics.items():
-            if metric.type in ['image', 'video']:
+            if metric.type == 'object':
                 # If image or video, need storage so files can be saved
                 eval_outputs[metric_name] = metric.log(tracked_data, 
                                                        eval_storage,
@@ -366,10 +376,10 @@ class StudyRLEvaluator(RLEvaluator):
     Performs I/O operations to add info to the study's database
     """
     
-    def __init__(self, config, db):
+    def __init__(self, config, db, metrics=None):
         self.make_env_fn = import_module_attr(config['make_env_module_path'])
         self.db = db
-        super().__init__(config)
+        super().__init__(config, metrics=metrics)
 
     @property
     def module_path(self):
@@ -378,26 +388,45 @@ class StudyRLEvaluator(RLEvaluator):
     def make_env(self, config):
         return self.make_env_fn(config)
 
-    def _setup_metric_loggers(self, config, metrics=None):
-        """"
-        Define what metrics should be logged during evaluation
-        """
-        # Add observation videos to tracked metrics
-        if metrics is None:
-            metrics = {'observation_videos': ObservationVideos()}
+    # def _setup_metric_loggers(self, config, metrics=None):
+    #     """"
+    #     Define what metrics should be logged during evaluation
+    #     """
+    #     # # Add observation videos to tracked metrics
+    #     # if metrics is None:
+    #     #     metrics = {'observation_videos': ObservationVideos()}
 
-        super()._setup_metric_loggers(config, metrics)
+    #     super()._setup_metric_loggers(config, metrics)
 
     def after_eval(self, info):
        
-        # Pull needed data from training ckpt
-        training_files = self.input_storage.load_from_archive('ckpt.zip',
-                                                              filenames=['trainer_ckpt.pt'],
-                                                              filetypes=['torch']
-                                                              )
-        
-        trainer_steps = training_files['trainer_ckpt.pt']['step']
 
+
+        if not self.random_agent:
+            # Pull needed data from training ckpt
+            training_files = self.input_storage.load_from_archive('ckpt.zip',
+                                                                filenames=['trainer_ckpt.pt'],
+                                                                filetypes=['torch']
+                                                                )
+            
+            trainer_steps = training_files['trainer_ckpt.pt']['step']
+
+
+
+            # Save training metrics
+            import wandb
+            api = wandb.Api()
+            run = api.run(f"{self.project}/{self.run}")
+            train_history = run.history(keys=['trainer_step', 
+                                            'train/episode_reward']).to_json()
+            train_eval_history = run.history(keys=['eval_step', 'eval/episode_reward_avg', 'eval/episode_reward_std']).to_json()
+            
+            self.output_storage.save('train_history.json', train_history, filetype='json')
+            self.output_storage.save('train_eval_history.json', train_eval_history, filetype='json')
+
+        else:
+            trainer_steps = 0
+            
         # Add the run to the study's database
         self.db.add_run({
             'run_id': self.run,
@@ -406,17 +435,6 @@ class StudyRLEvaluator(RLEvaluator):
             'steps': trainer_steps,
             'folder': self.output_storage.dir
         })
-
-        # Save training metrics
-        import wandb
-        api = wandb.Api()
-        run = api.run(f"{self.project}/{self.run}")
-        train_history = run.history(keys=['trainer_step', 
-                                          'train/episode_reward']).to_json()
-        train_eval_history = run.history(keys=['eval_step', 'eval/episode_reward_avg', 'eval/episode_reward_std']).to_json()
-        
-        self.output_storage.save('train_history.json', train_history, filetype='json')
-        self.output_storage.save('train_eval_history.json', train_eval_history, filetype='json')
 
         
 
