@@ -16,7 +16,9 @@ class Study(ABC):
         self.name = self.config['study']['name']
         self.storage = Storage(cfg['study']['storage'])
         self._setup_metrics(cfg['study']['metrics'])
-        self._setup_db(cfg['study']['database'])
+        database = cfg['study'].get('database')
+        if database:
+            self._setup_db(cfg['study']['database'])
 
     def train(self, config):
         trainer = self._make_trainer(config['overrides'])
