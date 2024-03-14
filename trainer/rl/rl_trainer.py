@@ -97,13 +97,13 @@ class RLTrainer(Trainer, ABC):
         config: config dict defining the envs
         return: env_fn, eval_env_fn i.e. env generating functions that can be executed as env_fn()
         """
-        if config['num_envs'] > 1:
+        if config.get('num_envs') is not None and config.get('num_envs') > 1:
             env_fns = [partial(self.make_env, config) for _ in range(config['num_envs'])]
         else:
             env_fns = partial(self.make_env, config)
         
         return env_fns
-
+    
     def _setup_env(self, env_config):
         env_fns = self.env_fns(env_config)
         self.env = TrainerEnv(env_fns)
