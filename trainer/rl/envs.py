@@ -1,7 +1,7 @@
-import gym
+import gymnasium as gym
 import numpy as np
 from einops import rearrange
-from gym.wrappers import FrameStack
+from gymnasium.wrappers import FrameStack
 
 
 class VecEnvWrapper(gym.Wrapper):
