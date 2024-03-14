@@ -43,7 +43,7 @@ class ReplayBuffer(object):
             for idx in range(obs.shape[0]):
                 # Add individual experiences separately
                 single_info = info[idx,:] if info else None
-                self._add_single(obs[idx,:], action[idx,:], curr_reward[idx],
+                self._add_single(obs[idx], action[idx], curr_reward[idx],
                                   reward[idx], next_obs[idx,:], done[idx], single_info)
         else:
             self._add_single(obs, action, curr_reward, reward, next_obs, done, info)
