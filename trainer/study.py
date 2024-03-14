@@ -15,7 +15,7 @@ class Study(ABC):
         self.config = cfg
         self.name = self.config['study']['name']
         self.storage = Storage(cfg['study']['storage'])
-        self._setup_metrics(cfg['study']['metrics'])
+        self._setup_metrics(cfg['study'].get('metrics'))
         database = cfg['study'].get('database')
         if database:
             self._setup_db(cfg['study']['database'])
@@ -109,9 +109,10 @@ class Study(ABC):
 
     def _setup_metrics(self, config):
         self.metrics = {}
-        for metric, metric_config in config.items():
-            metric_config.update({'name': metric})
-            self.metrics[metric] = Metric(metric_config)
+        if config is not None:
+            for metric, metric_config in config.items():
+                metric_config.update({'name': metric})
+                self.metrics[metric] = Metric(metric_config)
 
     def _setup_db(self, config):
         self.db = Storage(config)
