@@ -33,6 +33,9 @@ class RLTrainer(Trainer, ABC):
         self.model_update_steps = 0
         self.setup_sweep_score(config)
 
+    def _setup_metric_loggers(self, config, metrics=None):
+        pass
+
     def setup_sweep_score(self, config):
         # The score assigned to the training run. used e.g. in comparing runs in a sweep
         self.score_mode = config.get('score_type', 'max_eval_reward')
