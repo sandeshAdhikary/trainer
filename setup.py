@@ -7,6 +7,6 @@ setup(name='trainer',
       package_data={
           "trainer": ["*.yaml"],
       },
-      scripts=['bin/trainer-app'],
+      scripts=['bin/trainer-app', 'bin/trainer-run'],
       include_package_data=True,
       )
