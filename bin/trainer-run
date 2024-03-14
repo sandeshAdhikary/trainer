@@ -1,4 +1,4 @@
 #!/bin/bash
 # Get the installation path of the package
 package_path=$(pip show trainer | grep -E '^Location: ' | cut -d ' ' -f 2)
-python run $package_path/trainer/run_study.py "$@"
+python $package_path/trainer/run_study.py "$@"
