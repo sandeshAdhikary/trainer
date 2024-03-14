@@ -20,6 +20,8 @@ import hashlib
 from io import BytesIO
 import numpy as np
 import pandas as pd
+import logging
+
 
 class Storage:
     """
@@ -143,8 +145,9 @@ class BaseStorage(ABC):
                 else:
                     raise ValueError(f"Invalid filetype {filetype}")
         return outputs
-
-
+    
+    def close_connection(self):
+        pass
 
 class WandbStorage(BaseStorage):
     """"
@@ -350,7 +353,6 @@ class SSHFileSystemStorage(BaseStorage):
         super().__init__(config)
 
         self.connection = paramiko.client.SSHClient()
-        import logging
         logging.getLogger("paramiko").setLevel(logging.WARNING)
         self.connection.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         self.connection.connect(config['host'], 
@@ -384,6 +386,8 @@ class SSHFileSystemStorage(BaseStorage):
     def connection_active(self):
         return self.connection.get_transport().is_active()
         
+    def close_connection(self):
+        return self.connection.close()
 
     def save(self, filename, data, filetype, write_mode='w'):
         """

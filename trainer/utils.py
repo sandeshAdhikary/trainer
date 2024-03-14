@@ -8,6 +8,11 @@ from importlib.resources import files
 from warnings import warn
 import collections
 from importlib import import_module
+import time
+import hashlib
+from dotenv import load_dotenv
+
+DEFAULT_ENV_PATH = os.path.join(os.path.dirname(__file__), '.env')
 
 CLASS_TYPES = ['trainer', 'model', 'evaluator']
 COLORS = {
@@ -165,9 +170,32 @@ def is_directory_writable(directory_path):
 def import_module_attr(module_path):
     """
     e.g. if module_path is 'src.trainer.Trainer'
-         exeuctures 'from src.trainer import Trainer'
+         executes 'from src.trainer import Trainer'
          and returns Trainer object
     """
     cls_name = module_path.rsplit('.')[-1]
     module_name = '.'.join(module_path.rsplit('.')[:-1])
     return getattr(import_module(module_name), cls_name) 
+
+def generate_unique_hash(string, max_len=10, include_time=True):
+    if string is not None:
+        if include_time:
+            # Get current time in milliseconds
+            current_time = str(int(time.time() * 1000))
+        
+            # Concatenate string and current time
+            string = string + current_time
+        
+        # Calculate SHA-256 hash
+        sha256_hash = hashlib.sha256(string.encode()).hexdigest()
+        
+        return sha256_hash[-max_len:]
+    
+def load_env(env_file_path=None):
+    """
+    Load environment variables from a .env file
+    """
+    if env_file_path is not None:
+        load_dotenv(env_file_path, override=True)
+    else:
+        load_dotenv(DEFAULT_ENV_PATH, override=True)

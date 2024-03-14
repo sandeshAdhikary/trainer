@@ -2,12 +2,12 @@ import streamlit as st
 from streamlit_js_eval import streamlit_js_eval
 from trainer.utils import pretty_title
 from trainer.study import Study
-from trainer.app import app_utils
+from trainer.app.arxiv import app_utils
 import pandas as pd
 import json
 import altair as alt
 from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode, DataReturnMode
-from trainer.app.app_utils import exclude_key
+from trainer.app.arxiv.app_utils import exclude_key
 
 def run_selector(study):
 
