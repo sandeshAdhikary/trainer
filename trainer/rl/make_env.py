@@ -11,5 +11,5 @@ def make_gym_env(
         env_id,
         max_episode_steps=None,
         ):
-    return gym.make(env_id, max_episode_steps=max_episode_steps)
+    return gym.make(env_id, max_episode_steps=max_episode_steps, render_mode='rgb_array')
     

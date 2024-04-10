@@ -293,6 +293,9 @@ class RLEvaluator(Evaluator, ABC):
 
         for key in tracked_data.keys():
             tracked_data[key] = np.stack(tracked_data[key]) # (Time, N, ...)
+            if key in ['rewards', 'actions', 'obses']:
+                tracked_data[key] = tracked_data[key].astype(np.float32) # (Time, N, ...)
+
             for ide in range(eval_env.num_envs):
                 steps = steps_to_keep[ide]
                 if key == 'renders' or len(tracked_data[key].shape) == 5:

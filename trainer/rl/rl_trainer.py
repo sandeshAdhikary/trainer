@@ -184,7 +184,8 @@ class RLTrainer(Trainer, ABC):
     def setup_evaluator(self):
 
         eval_env_config = deepcopy(self.config['env'])
-        eval_env_config.update(self.config['eval_env'])
+        if self.config.get('eval_env') is not None:
+            eval_env_config.update(self.config.get('eval_env'))
         # Evaluator's input storage need to load checkpoints
         # So, it's set to trainer's output storage
         eval_storage_config = {}
@@ -196,7 +197,7 @@ class RLTrainer(Trainer, ABC):
         evaluator_config = {
             'project': self.project,
             'run': self.run,
-            'num_envs': self.config['eval_env']['num_envs'],
+            'num_envs': eval_env_config['num_envs'],
             'max_eval_jobs': 1,
             'async_eval': False, # Evalutor does not run async; even if trainer runs async evals
             'model_name': 'ckpt.zip',   
@@ -425,7 +426,7 @@ class RLTrainer(Trainer, ABC):
         self.logger.finish()
 
 
-    def _load_checkpoint(self, chkpt_name='ckpt', log_checkpoint=True):
+    def _load_checkpoint(self, chkpt_name='ckpt', log_checkpoint=True, load_buffer=True):
         try:
             ckpt = {}
             with tempfile.TemporaryDirectory() as tmp_dir:
@@ -433,29 +434,30 @@ class RLTrainer(Trainer, ABC):
                 # # Load train_ckpt
                 ckpt['trainer'] = torch.load(os.path.join(tmp_dir, 'trainer_ckpt.pt'))
                 ckpt['model'] = torch.load(os.path.join(tmp_dir, 'model_ckpt.pt'))
-                try:
-                    # Single replay buffer file
-                    ckpt['replay_buffer'] = torch.load(os.path.join(tmp_dir, 'replay_buffer_ckpt.pt'))
-                except FileNotFoundError as e:
+                if load_buffer:
                     try:
-                        # Replay buffer is split into chunks
-                        buffer_files = sorted(glob(os.path.join(tmp_dir, 'replay_buffer_*_ckpt.pt')))
-                        buffer_ckpt = torch.load(buffer_files[0])
-                        if len(buffer_files) > 1:
-                            for buffer_file in buffer_files[1:]:
-                                buffer_chunk = torch.load(buffer_file)
-                                for k in buffer_ckpt.keys():
-                                        if isinstance(buffer_ckpt[k], torch.Tensor):
-                                            buffer_ckpt[k] = torch.cat([buffer_ckpt[k], buffer_chunk[k]], dim=0)
-                                        elif isinstance(buffer_ckpt[k], np.ndarray):
-                                            buffer_ckpt[k] = np.concatenate([buffer_ckpt[k], buffer_chunk[k]], axis=0)
-                                        elif isinstance(buffer_ckpt[k], (int, float, str)):
-                                            pass
-                                        else:
-                                            raise ValueError('Unknown buffer type')
-                        ckpt['replay_buffer'] = buffer_ckpt
-                    except Exception as e:
-                        raise ValueError("Could not Load Existing Replay Buffer")
+                        # Single replay buffer file
+                        ckpt['replay_buffer'] = torch.load(os.path.join(tmp_dir, 'replay_buffer_ckpt.pt'))
+                    except FileNotFoundError as e:
+                        try:
+                            # Replay buffer is split into chunks
+                            buffer_files = sorted(glob(os.path.join(tmp_dir, 'replay_buffer_*_ckpt.pt')))
+                            buffer_ckpt = torch.load(buffer_files[0])
+                            if len(buffer_files) > 1:
+                                for buffer_file in buffer_files[1:]:
+                                    buffer_chunk = torch.load(buffer_file)
+                                    for k in buffer_ckpt.keys():
+                                            if isinstance(buffer_ckpt[k], torch.Tensor):
+                                                buffer_ckpt[k] = torch.cat([buffer_ckpt[k], buffer_chunk[k]], dim=0)
+                                            elif isinstance(buffer_ckpt[k], np.ndarray):
+                                                buffer_ckpt[k] = np.concatenate([buffer_ckpt[k], buffer_chunk[k]], axis=0)
+                                            elif isinstance(buffer_ckpt[k], (int, float, str)):
+                                                pass
+                                            else:
+                                                raise ValueError('Unknown buffer type')
+                            ckpt['replay_buffer'] = buffer_ckpt
+                        except Exception as e:
+                            raise ValueError("Could not Load Existing Replay Buffer")
 
         # return ckpt
         except Exception as e:

@@ -471,6 +471,8 @@ class Trainer(ABC):
         return ckpt_state
 
 
+    
+
 class SupervisedTrainer(Trainer):
     """
     Trainer class for supervised learning

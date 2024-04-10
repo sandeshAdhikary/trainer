@@ -26,6 +26,9 @@ class ReplayBuffer(object):
         self.k_obses = np.empty((self.capacity, *self.obs_shape), dtype=obs_dtype)
         self.next_obses = np.empty((self.capacity, *self.obs_shape), dtype=obs_dtype)
         self.actions = np.empty((self.capacity, *self.action_shape), dtype=np.float32)
+        if self.actions.ndim == 1:
+            # Discrete actions
+            self.actions = np.expand_dims(self.actions, axis=1)
         self.curr_rewards = np.empty((self.capacity, 1), dtype=np.float32)
         self.rewards = np.empty((self.capacity, 1), dtype=np.float32)
         self.not_dones = np.empty((self.capacity, 1), dtype=np.float32)
@@ -44,7 +47,7 @@ class ReplayBuffer(object):
                 # Add individual experiences separately
                 single_info = info[idx,:] if info else None
                 self._add_single(obs[idx], action[idx], curr_reward[idx],
-                                  reward[idx], next_obs[idx,:], done[idx], single_info)
+                                  reward[idx], next_obs[idx], done[idx], single_info)
         else:
             self._add_single(obs, action, curr_reward, reward, next_obs, done, info)
 

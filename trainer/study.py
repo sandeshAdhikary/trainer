@@ -211,6 +211,7 @@ class Study(ABC):
     def _make_evaluator(self, config):
         raise NotImplementedError
 
+
 class RLStudy(Study):
 
     def __init__(self, *args, **kwargs):
@@ -219,7 +220,9 @@ class RLStudy(Study):
     def _make_model(self, config, trainer):
         model_config = self._merge_configs(self.config['model'], config.get('model', {}))
         model_config['obs_shape'] = trainer.env.observation_space.shape[1:]
-        model_config['action_shape'] = trainer.env.action_space.shape[1:]
+        model_config['action_shape'] = trainer.env.action_space.shape
+        if len(model_config['action_shape']) > 1:
+            model_config['action_shape'] = model_config['action_shape'][1:]
         model_cls = import_module_attr(model_config['module_path'])
         return model_cls(dict(model_config))
 
@@ -255,6 +258,21 @@ class RLStudy(Study):
             evaluator_cls = StudyRLEvaluator
 
         return evaluator_cls(evaluator_config, db=self.db, metrics=metrics_dict)
+
+class RLStudySB3(RLStudy):
+
+    def _make_model(self, config, trainer):
+        """
+        SB3 models need environment to initialize. 
+        So, we'll just pass the trainer object
+        """
+        model_config = self._merge_configs(self.config['model'], config.get('model', {}))
+        model_config['obs_shape'] = trainer.env.observation_space.shape[1:]
+        model_config['action_shape'] = trainer.env.action_space.shape
+        if len(model_config['action_shape']) > 1:
+            model_config['action_shape'] = model_config['action_shape'][1:]
+        model_cls = import_module_attr(model_config['module_path'])
+        return model_cls(dict(model_config), trainer=trainer)
 
 
 if __name__ == '__main__':
