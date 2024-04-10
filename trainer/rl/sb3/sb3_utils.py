@@ -16,5 +16,4 @@ class SB3InternalLogger(Logger):
         self.trainer = trainer
 
     def dump(self, step: int = 0) -> None:
-        # TODO: when dumping add to train.log or eval.log?
         super().dump(step)
