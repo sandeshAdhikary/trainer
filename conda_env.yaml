@@ -27,3 +27,5 @@ dependencies:
     - matplotlib
     - wandb
     - sqlalchemy
+    - python-dotenv
+    - stable-baselines3
