@@ -1,0 +1,14 @@
+database:
+  host: ${oc.env:MYSQL_HOST}
+  database: ${oc.env:MYSQL_DB}
+  password: ${oc.env:MYSQL_PASSWORD}
+  type: mysql
+  username: ${oc.env:MYSQL_USERNAME}
+study_name: studies_backup
+study_storage:
+  host: ${oc.env:SSH_HOST}
+  overwrite: false
+  password: ${oc.env:SSH_PASSWORD}
+  root_dir: ${oc.env:SSH_DIR}
+  type: ssh
+  username: ${oc.env:SSH_USERNAME}

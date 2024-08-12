@@ -1,0 +1,4 @@
+study_name: example_rl_study
+study_storage:
+  root_dir: /tmp/example_rl_study
+  type: local

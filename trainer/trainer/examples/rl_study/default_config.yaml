@@ -1,0 +1,310 @@
+study:
+  name: ExampleRLStudy
+  desc: |
+    Testing study setup
+  storage:
+      type: ssh
+      host: ${oc.env:SSH_HOST}
+      username: ${oc.env:SSH_USERNAME}
+      password: ${oc.env:SSH_PASSWORD}
+      root_dir: ${oc.env:SSH_DIR}/${..name}
+      overwrite: false
+  database:
+      type: mysql
+      name: ${..name} 
+      host: ${oc.env:MYSQL_HOST}
+      username: ${oc.env:MYSQL_USERNAME}
+      password: ${oc.env:MYSQL_PASSWORD}
+  metrics: 
+    avg_episode_reward:
+      name: avg_episode_reward
+      type: scalar
+      temporal: false
+      table_spec: null
+    observation_videos:
+      name: observation_videos
+      type: object
+      temporal: false
+      table_spec: null
+    rewards_dataframe:
+      name: rewards_dataframe
+      module_path: src.studies.dm_control_study.metrics.RewardsDataFrameMetric
+    # tsne:
+    #   name: tsne
+    #   module_path: src.studies.dm_control_study.metrics.TSNEClustersMetric
+    # kmeans:
+    #   name: kmeans
+    #   module_path: src.studies.dm_control_study.metrics.KMeansClustersMetric
+trainer:
+  project: ${..project.name}
+  module_path: src.studies.dm_control_study.trainers.BisimRLTrainer
+  make_env_module_path: src.envs.setup_env.make_env
+  seed: 123
+  batch_size: 128
+  eval_freq: 20_000 # every n epochs
+  init_steps: 1_000
+  num_eval_episodes: 1
+  num_train_steps: 1_000_001
+  port: 2000
+  device: cuda
+  terminal_display: rich
+  save_checkpoint_freq: 20_000 # every epoch
+  async_eval: false
+  log_length_train: 3
+  log_length_eval: 3
+  load_from_checkpoint: true
+  load_checkpoint_type: zip
+  log_checkpoint: false # save checkpoint to logger (e.g. wandb)
+  log_epoch_freq: 5000 # every epoch
+  env:
+    seed: ${...trainer.seed}
+    domain_name: ???
+    task_name: ???
+    img_source: ???
+    episode_length: 1000
+    image_size: 88
+    frame_stack: 3
+    num_envs: 1
+    render: false
+    total_frames: 1000
+    encoder_type: pixel
+    action_repeat: 4
+  eval_env:
+    num_envs: 5
+    episode_length: 1000
+    seed: ${...trainer.seed}
+    domain_name: ${...trainer.env.domain_name}
+    task_name: ${...trainer.env.task_name}
+    img_source: ${...trainer.env.img_source}
+    image_size: 88
+    frame_stack: 3
+    render: false
+    total_frames: 1000
+    encoder_type: pixel
+    action_repeat: 4
+  eval_metrics:
+      # In addition to default metrics
+      observation_videos:
+        name: observation_videos
+        type: object
+        temporal: false
+        table_spec: null
+  replay_buffer:
+    replay_buffer_capacity: 100_000 # paper used 1M, but we don't have memory
+  storage:
+    input:
+      type: ssh
+      root_dir: ${....study.storage.root_dir}
+      sub_dir: train
+      host: ${oc.env:SSH_HOST}
+      username: ${oc.env:SSH_USERNAME}
+      password: ${oc.env:SSH_PASSWORD}
+    output:
+      type: ssh
+      root_dir: ${....study.storage.root_dir}
+      sub_dir: train
+      host: ${oc.env:SSH_HOST}
+      username: ${oc.env:SSH_USERNAME}
+      password: ${oc.env:SSH_PASSWORD}
+model:
+  project: ${..project.name}
+  module_path: src.studies.dm_control_study.models.BisimModel
+  make_agent_module_path: src.agent.make_agent.make_agent
+  device: ${..trainer.device}
+  # Defaults from DBC paper
+  discount: 0.99
+  critic_lr: 0.00001
+  critic_target_update_freq: 2
+  critic_tau: 0.005
+  actor_lr: 0.00001
+  actor_update_freq: 2
+  actor_log_std_max: 2
+  actor_log_std_min: -5
+  encoder_lr: 0.00001
+  decoder_lr: 0.00001
+  init_temperature: 0.1
+  encoder_feature_dim: 50
+  transition_model_type: 'probabilistic'
+  # Other defaults
+  agent: bisim
+  actor_beta: 0.9
+  alpha_beta: 0.9
+  alpha_lr: 0.0001
+  bisim_coef: 0.5
+  critic_beta: 0.9
+  decoder_type: pixel
+  decoder_update_freq: 1
+  decoder_weight_lambda: 0.0000001
+  encoder_kernel_bandwidth: auto
+  encoder_mode: null
+  encoder_normalize_loss: true
+  encoder_ortho_loss_reg: 0.0001
+  encoder_output_dim: null
+  encoder_stride: 1
+  encoder_tau: 0.005
+  encoder_type: 'pixel'
+  hidden_dim: 256
+  k: 3
+  load_encoder: null
+  num_filters: 32
+  num_layers: 4
+  # New params
+  decode_rewards_from_next_latent: true
+  residual_actor: False
+  use_schedulers: False
+  encoder_softmax: False
+  rew_max: ${..trainer.env.action_repeat} # For DMControl
+  rew_min: 0.0 # For DMControl
+  normalize_kernel: true
+  kernel_type: gaussian
+  predict_inverse_dynamics: false
+  inverse_dynamics_lr: 0.0001
+  inverse_dynamics_loss_weight: 10.0
+  encoder_max_norm: false
+  intrinsic_reward: false
+  intrinsic_reward_max: 0.1
+  intrinsic_reward_scale: 1.0
+  trunk_regularization: false
+  trunk_regularization_coeff: 1e-3
+  rap_structural_distance: l1_smooth
+  rap_reward_dist: False
+  rap_square_target: False
+  epsilon: 1e-9
+  normalization_mode: symmetric
+logger:
+  project: ${..project.name}
+  module_path: trainer.logger.Logger
+  sw: wandb
+  dir: ${oc.env:LOG_DIR}
+  img_downscale_factor: 1
+  minimal: false
+  video_log_freq: null
+  tracked_params: ${model}
+  num_train_steps: ${..trainer.num_train_steps}
+  eval_freq: ${..trainer.eval_freq}
+  cleanup: true # delete logdir after training
+  log_freq: 100 # epochs
+sweeper:
+  project: ${..project.name}
+  method: grid
+  sweeper_type: wandb
+  name: ???
+  load_runs_from_queue: true
+  heartbeat_timeout: 30
+  parameters: ???
+evaluator:
+  # module_path: src.studies.dm_control_study.evaluators.DMCStudyRLEvaluator
+  project: ${..project.name}
+  use_best_ckpt: true
+  num_envs: 30
+  max_eval_jobs: 2
+  async_eval: false
+  model_name: ckpt.zip # use best_ckpt.zip or ckpt.zip
+  saved_model_type: zip
+  save_output: true
+  display_progress: true
+  sweep_list: null # Evaluate all runs in these sweeps
+  run_list: null # Only evaluate these runs
+  random_agent: false
+  storage: 
+    input:
+      type: ssh
+      host: ${oc.env:SSH_HOST}
+      username: ${oc.env:SSH_USERNAME}
+      password: ${oc.env:SSH_PASSWORD}
+      root_dir: ${oc.env:SSH_DIR}/${study.name}
+      sub_dir: train # Load model from /train
+    output:
+      type: ssh
+      host: ${oc.env:SSH_HOST}
+      username: ${oc.env:SSH_USERNAME}
+      password: ${oc.env:SSH_PASSWORD}
+      root_dir: ${oc.env:SSH_DIR}/${study.name}
+      sub_dir: eval # Save outputs to /eval
+      overwrite: true
+  envs:
+    dmc_env:
+      domain_name: ${....trainer.env.domain_name}
+      task_name: ${....trainer.env.task_name}
+      seed: 123
+      episode_length: &eval_episode_length 1_000
+      image_size: 88
+      img_source: null
+      frame_stack: 3
+      num_envs: ${....evaluator.num_envs}
+      render: false
+      total_frames: 1000
+      encoder_type: pixel
+      action_repeat: ${....trainer.env.action_repeat}
+  metrics: 
+    avg_episode_reward:
+      name: avg_episode_reward
+      type: scalar
+      temporal: false
+      table_spec: null
+    observation_videos:
+      name: observation_videos
+      type: object
+      temporal: false
+      table_spec: null
+    observations:
+      name: observations
+      type: object
+      temporal: false
+      table_spec: null
+    # tsne:
+    #   name: tsne
+    #   module_path: src.studies.dm_control_study.metrics.TSNEClustersMetric
+    # kmeans:
+    #   name: kmeans
+    #   module_path: src.studies.dm_control_study.metrics.KMeansClustersMetric
+    rewards_dataframe:
+      name: rewards_dataframe
+      module_path: src.studies.dm_control_study.metrics.RewardsDataFrameMetric
+  # callbacks:
+  #     clusters:
+  #       module_path: src.studies.dm_control_study.eval_callbacks.ClusteringEvalCallback
+  #       data_path: ${oc.env:DMC_OBSERVATIONS_DATASET}
+  #       env_name: ${....trainer.env.domain_name}-${....trainer.env.task_name}
+  #       n_iter: 5000
+  #       random_state: 0
+  #       init: random
+    # kinetics_env:
+    #   domain_name: ${....trainer.env.domain_name}
+    #   task_name: ${....trainer.env.task_name}
+    #   seed: 123
+    #   episode_length: *eval_episode_length
+    #   image_size: 88
+    #   img_source: kinetics_videos
+    #   frame_stack: 3
+    #   num_envs: 5
+    #   render: false
+    #   total_frames: 1000
+    #   encoder_type: pixel
+    #   action_repeat: ${....trainer.env.action_repeat}
+    # mnist_env:
+    #   domain_name: ${....trainer.env.domain_name}
+    #   task_name: ${....trainer.env.task_name}
+    #   seed: 123
+    #   episode_length: *eval_episode_length
+    #   image_size: 88
+    #   img_source: mnist
+    #   frame_stack: 3
+    #   num_envs: 5
+    #   render: false
+    #   total_frames: 1000
+    #   encoder_type: pixel
+    #   action_repeat: ${....trainer.env.action_repeat}
+    # driving_stereo:
+    #   domain_name: ${....trainer.env.domain_name}
+    #   task_name: ${....trainer.env.task_name}
+    #   seed: 123
+    #   episode_length: *eval_episode_length
+    #   image_size: 88
+    #   img_source: driving_stereo
+    #   frame_stack: 3
+    #   num_envs: 5
+    #   render: false
+    #   total_frames: 1000
+    #   encoder_type: pixel
+    #   action_repeat: ${....trainer.env.action_repeat}

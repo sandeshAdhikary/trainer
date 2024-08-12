@@ -1,0 +1,31 @@
+name: trainer
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pytorch=1.12.1=gpu_cuda113py39h19ae3d8_1
+  - mysqlclient
+  - pip
+  - pip:
+    - python-dotenv
+    - streamlit
+    - streamlit-aggrid
+    - extra-streamlit-components
+    - streamlit_js_eval
+    - streamlit-extras
+    - streamlit-ace
+    - mysql-connector-python
+    - chardet
+    - gym
+    - pillow==9.4.0
+    - rich
+    - tqdm
+    - imageio
+    - imageio-ffmpeg
+    - einops
+    - matplotlib
+    - wandb
+    - sqlalchemy
+    - python-dotenv
+    - stable-baselines3
